@@ -83,8 +83,9 @@ function looksLikePHIText(s: string) {
   return false;
 }
 
-export function assertNoPHI(payload: any) {
+export function assertNoPHI(payload: any, opts?: { skipKeys?: Set<string> }) {
   const path: string[] = [];
+  const skipKeys = opts?.skipKeys;
 
   const fail = (reason: string) => {
     throw new Error(`ERROR: PHI detected. Non-PHI packet required. (${reason})`);
@@ -103,6 +104,9 @@ export function assertNoPHI(payload: any) {
     if (!isPlainObject(node)) return;
 
     for (const [k, v] of Object.entries(node)) {
+      // skip top-level keys that contain admin-authored metadata, not PHI
+      if (skipKeys && path.length === 0 && skipKeys.has(k)) continue;
+
       const keyLower = String(k).toLowerCase();
 
       if (FORBIDDEN_KEYS.has(keyLower)) {

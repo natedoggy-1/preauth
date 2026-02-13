@@ -317,7 +317,9 @@ export async function ingest(
 // Patient-scoped NON-PHI Chat → n8n (existing — unchanged)
 // ===============================
 export async function chatNonPhiCase(cfg: Config, input: NonPhiChatInput) {
-  assertNoPHI(input.non_phi_packet);
+  // skip admin-authored metadata fields (templates, policies) — not patient PHI
+  const NON_PHI_METADATA_KEYS = new Set(["template", "payer_policy", "parent_letter", "sections"]);
+  assertNoPHI(input.non_phi_packet, { skipKeys: NON_PHI_METADATA_KEYS });
 
   const baseUrl = cleanBaseUrl(cfg.baseUrl);
   const url = `${baseUrl}/webhook/chat`;
