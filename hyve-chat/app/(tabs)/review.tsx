@@ -30,6 +30,8 @@ import {
   clinicSaveLetter,
   clinicUpdateLetterStatus,
   clinicLogGeneration,
+  clinicDownloadLetterPdf,
+  evalSubmitFeedback,
   type Config as ApiConfig,
   type LetterListItem,
   type LetterDetail,
@@ -604,6 +606,27 @@ export default function ReviewScreen() {
         borderTopWidth: 1, borderTopColor: UI.border, backgroundColor: UI.bg,
         flexDirection: "row", gap: 8, flexWrap: "wrap", justifyContent: "flex-end",
       }}>
+        <Pressable
+          onPress={async () => {
+            try {
+              const uri = await clinicDownloadLetterPdf({
+                facility_id: config?.facilityId || "FAC-DEMO",
+                letter_id: letterDetail?.letter_id || "",
+              });
+              Alert.alert("PDF Downloaded", `Saved to: ${uri}`);
+            } catch (e: any) {
+              Alert.alert("PDF Error", e.message);
+            }
+          }}
+          disabled={busy || !letterDetail?.letter_id}
+          style={{
+            paddingHorizontal: 14, paddingVertical: 10, borderRadius: 12,
+            backgroundColor: "#6e40c9", opacity: busy || !letterDetail?.letter_id ? 0.6 : 1,
+          }}
+        >
+          <Text style={{ color: "#fff", fontWeight: "900", fontSize: 12 }}>PDF</Text>
+        </Pressable>
+
         <Pressable
           onPress={runValidation}
           disabled={busy || validating}

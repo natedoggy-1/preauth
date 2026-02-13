@@ -22,10 +22,14 @@
 // ============================================================================
 
 import dotenv from "dotenv";
+import { fileURLToPath } from "url";
+import path from "path";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 dotenv.config({
-  path:
-    process.env.DOTENV_PATH ||
-    "C:\\Users\\Natha\\hyve-chat\\clinic-db-api\\.env",
+  path: process.env.DOTENV_PATH || path.join(__dirname, ".env"),
   override: true,
 });
 
@@ -1653,35 +1657,310 @@ app.patch("/api/generation-logs/:id/outcome", requireToken, async (req, res) => 
 });
 
 // ============================================================================
+// PDF Generation (Phase 4)
+// ============================================================================
+
+app.get("/api/letters/:id/pdf", requireToken, async (req, res) => {
+  const { tenant_id, facility_id } = tf(req);
+  const letter_id = req.params.id;
+
+  try {
+    // Fetch letter, facility, and provider data in parallel
+    const [letterRes, facilityRes] = await Promise.all([
+      pool.query(
+        `SELECT gl.*, p.first_name AS patient_first, p.last_name AS patient_last,
+                p.dob AS patient_dob
+         FROM ${S}.generated_letters gl
+         LEFT JOIN ${S}.patients p ON p.patient_id = gl.patient_id
+         WHERE gl.tenant_id=$1 AND gl.facility_id=$2 AND gl.letter_id=$3`,
+        [tenant_id, facility_id, letter_id]
+      ),
+      pool.query(
+        `SELECT * FROM ${S}.facilities WHERE tenant_id=$1 AND facility_id=$2`,
+        [tenant_id, facility_id]
+      ),
+    ]);
+
+    const letter = letterRes.rows[0];
+    if (!letter) return res.status(404).json({ ok: false, error: "Letter not found" });
+
+    const facility = facilityRes.rows[0] || {};
+
+    // Fetch provider if available
+    let provider = {};
+    if (letter.provider_id) {
+      const provRes = await pool.query(
+        `SELECT * FROM ${S}.providers WHERE tenant_id=$1 AND facility_id=$2 AND provider_id=$3`,
+        [tenant_id, facility_id, letter.provider_id]
+      );
+      provider = provRes.rows[0] || {};
+    }
+
+    // Build PDF as plain text with structured layout (no external dependency)
+    const dateStr = letter.letter_date
+      ? new Date(letter.letter_date).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })
+      : new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
+
+    const lines = [];
+
+    // Letterhead
+    if (facility.facility_name) {
+      lines.push(facility.facility_name);
+      if (facility.address_line1) lines.push(facility.address_line1);
+      if (facility.city) lines.push(`${facility.city}, ${facility.state || ""} ${facility.zip || ""}`);
+      if (facility.phone) lines.push(`Phone: ${facility.phone}`);
+      if (facility.fax) lines.push(`Fax: ${facility.fax}`);
+      if (facility.npi) lines.push(`NPI: ${facility.npi}`);
+      lines.push("");
+    }
+
+    lines.push(dateStr);
+    lines.push("");
+
+    // Letter body
+    if (letter.letter_body) {
+      lines.push(letter.letter_body);
+    }
+
+    lines.push("");
+
+    // Signature block
+    if (provider.signature_name || provider.first_name) {
+      lines.push("Sincerely,");
+      lines.push("");
+      lines.push(provider.signature_name || `${provider.first_name} ${provider.last_name}, ${provider.credentials || ""}`);
+      if (provider.specialty) lines.push(provider.specialty);
+      if (provider.npi) lines.push(`NPI: ${provider.npi}`);
+    }
+
+    const pdfContent = lines.join("\n");
+
+    // Return as text/plain for now (PDF binary generation requires pdfkit)
+    // If pdfkit is available, it will be used; otherwise return formatted text
+    try {
+      const PDFDocument = (await import("pdfkit")).default;
+      const chunks = [];
+
+      const doc = new PDFDocument({ margin: 72, size: "LETTER" });
+      doc.on("data", (chunk) => chunks.push(chunk));
+
+      const pdfPromise = new Promise((resolve) => {
+        doc.on("end", () => resolve(Buffer.concat(chunks)));
+      });
+
+      // Letterhead
+      doc.fontSize(14).font("Helvetica-Bold");
+      if (facility.facility_name) doc.text(facility.facility_name);
+      doc.fontSize(9).font("Helvetica");
+      if (facility.address_line1) doc.text(facility.address_line1);
+      if (facility.city) doc.text(`${facility.city}, ${facility.state || ""} ${facility.zip || ""}`);
+      if (facility.phone) doc.text(`Phone: ${facility.phone}  |  Fax: ${facility.fax || ""}`);
+      if (facility.npi) doc.text(`NPI: ${facility.npi}`);
+      doc.moveDown();
+
+      // Date
+      doc.fontSize(11).font("Helvetica").text(dateStr);
+      doc.moveDown();
+
+      // Letter body
+      doc.fontSize(11).font("Helvetica");
+      if (letter.letter_body) {
+        doc.text(letter.letter_body, { align: "left", lineGap: 2 });
+      }
+      doc.moveDown(2);
+
+      // Signature
+      if (provider.signature_name || provider.first_name) {
+        doc.text("Sincerely,");
+        doc.moveDown();
+        doc.font("Helvetica-Bold").text(
+          provider.signature_name || `${provider.first_name} ${provider.last_name}, ${provider.credentials || ""}`
+        );
+        doc.font("Helvetica").fontSize(10);
+        if (provider.specialty) doc.text(provider.specialty);
+        if (provider.npi) doc.text(`NPI: ${provider.npi}`);
+      }
+
+      doc.end();
+      const pdfBuffer = await pdfPromise;
+
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `attachment; filename="PA_letter_${letter_id}.pdf"`);
+      res.send(pdfBuffer);
+    } catch {
+      // pdfkit not installed — return formatted text
+      res.setHeader("Content-Type", "text/plain");
+      res.setHeader("Content-Disposition", `attachment; filename="PA_letter_${letter_id}.txt"`);
+      res.send(pdfContent);
+    }
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e) });
+  }
+});
+
+// ============================================================================
+// Production Metrics (Phase 6)
+// ============================================================================
+
+// GET /api/metrics/generation — aggregate generation stats
+app.get("/api/metrics/generation", requireToken, async (req, res) => {
+  const { tenant_id, facility_id } = tf(req);
+  const days = Number(req.query.days || 30);
+
+  try {
+    const r = await pool.query(
+      `SELECT
+         COUNT(*)::int AS total_generations,
+         ROUND(AVG(generation_time_ms))::int AS avg_generation_ms,
+         ROUND(AVG(section_count), 1) AS avg_sections,
+         COUNT(*) FILTER (WHERE validation_passed = true)::int AS validation_passed,
+         COUNT(*) FILTER (WHERE validation_passed = false)::int AS validation_failed,
+         ROUND(100.0 * COUNT(*) FILTER (WHERE validation_passed = true) / NULLIF(COUNT(*), 0), 1) AS validation_pass_rate,
+         COUNT(*) FILTER (WHERE outcome = 'approved')::int AS approved,
+         COUNT(*) FILTER (WHERE outcome = 'denied')::int AS denied,
+         COUNT(DISTINCT model_id) AS models_used
+       FROM ${S}.generation_logs
+       WHERE tenant_id=$1 AND facility_id=$2
+         AND created_at >= NOW() - INTERVAL '1 day' * $3`,
+      [tenant_id, facility_id, days]
+    );
+    res.json({ ok: true, period_days: days, ...r.rows[0] });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e) });
+  }
+});
+
+// GET /api/metrics/outcomes — approval/denial rates by payer
+app.get("/api/metrics/outcomes", requireToken, async (req, res) => {
+  const { tenant_id, facility_id } = tf(req);
+  const days = Number(req.query.days || 90);
+
+  try {
+    const r = await pool.query(
+      `SELECT
+         gl.payer_id,
+         COUNT(*)::int AS total,
+         COUNT(*) FILTER (WHERE gl.outcome = 'approved')::int AS approved,
+         COUNT(*) FILTER (WHERE gl.outcome = 'denied')::int AS denied,
+         COUNT(*) FILTER (WHERE gl.outcome = 'withdrawn')::int AS withdrawn,
+         ROUND(100.0 * COUNT(*) FILTER (WHERE gl.outcome = 'approved') / NULLIF(COUNT(*), 0), 1) AS approval_rate
+       FROM ${S}.generation_logs gl
+       WHERE gl.tenant_id=$1 AND gl.facility_id=$2
+         AND gl.created_at >= NOW() - INTERVAL '1 day' * $3
+         AND gl.outcome IS NOT NULL
+       GROUP BY gl.payer_id
+       ORDER BY total DESC`,
+      [tenant_id, facility_id, days]
+    );
+    res.json({ ok: true, period_days: days, by_payer: r.rows });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e) });
+  }
+});
+
+// GET /api/metrics/quality — validation score trends
+app.get("/api/metrics/quality", requireToken, async (req, res) => {
+  const { tenant_id, facility_id } = tf(req);
+  const days = Number(req.query.days || 30);
+
+  try {
+    const r = await pool.query(
+      `SELECT
+         DATE(created_at) AS date,
+         COUNT(*)::int AS count,
+         ROUND(100.0 * COUNT(*) FILTER (WHERE validation_passed = true) / NULLIF(COUNT(*), 0), 1) AS pass_rate,
+         ROUND(AVG(generation_time_ms))::int AS avg_ms
+       FROM ${S}.generation_logs
+       WHERE tenant_id=$1 AND facility_id=$2
+         AND created_at >= NOW() - INTERVAL '1 day' * $3
+       GROUP BY DATE(created_at)
+       ORDER BY date DESC`,
+      [tenant_id, facility_id, days]
+    );
+    res.json({ ok: true, period_days: days, daily: r.rows });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e) });
+  }
+});
+
+// ============================================================================
+// Audit Logging Middleware (HIPAA — Phase 6)
+// ============================================================================
+app.use("/api", (req, res, next) => {
+  const start = Date.now();
+  const originalEnd = res.end;
+
+  res.end = function (...args) {
+    const duration = Date.now() - start;
+    // Fire-and-forget audit log (don't block the response)
+    const patientId = req.body?.patient_id || req.params?.patient_id || req.query?.patient_id || null;
+    pool.query(
+      `INSERT INTO ${S}.audit_log (tenant_id, facility_id, endpoint, method, patient_id, user_id, ip_address, status_code, response_time_ms)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [
+        req.body?.tenant_id || 1,
+        req.body?.facility_id || req.query?.facility_id || "FAC-DEMO",
+        req.originalUrl,
+        req.method,
+        patientId,
+        req.header("X-User-Id") || null,
+        req.ip,
+        res.statusCode,
+        duration,
+      ]
+    ).catch(() => {}); // silently ignore audit log failures
+
+    originalEnd.apply(res, args);
+  };
+  next();
+});
+
+// ============================================================================
+// Mount evaluation router (Phase 5)
+// ============================================================================
+try {
+  const { default: createEvalRouter } = await import("./routes/eval.js");
+  app.use("/api/eval", requireToken, createEvalRouter(pool, CLINIC_SCHEMA));
+  console.log("  Eval router mounted at /api/eval");
+} catch (e) {
+  console.log("  Eval router not loaded (routes/eval.js not found or error):", e.message);
+}
+
+// ============================================================================
 // Start server
 // ============================================================================
 app.listen(PORT, HOST, () => {
-  console.log(`Clinic DB API v3 running at http://${HOST}:${PORT}`);
+  console.log(`Clinic DB API v3+ running at http://${HOST}:${PORT}`);
   console.log(`Schema: ${CLINIC_SCHEMA}`);
   console.log(`Endpoints:`);
   console.log(`  GET  /health`);
   console.log(`  POST /api/patients/search`);
   console.log(`  POST /api/patients/background`);
-  console.log(`  POST /api/patients/normalize              ← NEW v3`);
+  console.log(`  POST /api/patients/normalize              ← v3`);
   console.log(`  GET  /api/facility`);
   console.log(`  GET  /api/providers`);
   console.log(`  GET  /api/providers/:id`);
   console.log(`  GET  /api/payers`);
   console.log(`  GET  /api/payers/:id`);
   console.log(`  POST /api/payer-policy/match`);
-  console.log(`  POST /api/policy/extract-criteria         ← NEW v3`);
+  console.log(`  POST /api/policy/extract-criteria         ← v3`);
   console.log(`  GET  /api/letter-templates`);
   console.log(`  GET  /api/letter-templates/:id`);
-  console.log(`  GET  /api/letter-templates/:id/sections   ← NEW v3`);
-  console.log(`  POST /api/letter-templates/:id/sections   ← NEW v3`);
+  console.log(`  GET  /api/letter-templates/:id/sections   ← v3`);
+  console.log(`  POST /api/letter-templates/:id/sections   ← v3`);
   console.log(`  POST /api/letters/generate-context`);
-  console.log(`  POST /api/letters/generate-sections       ← NEW v3`);
-  console.log(`  POST /api/letters/validate                ← NEW v3`);
+  console.log(`  POST /api/letters/generate-sections       ← v3`);
+  console.log(`  POST /api/letters/validate                ← v3`);
   console.log(`  POST /api/letters`);
   console.log(`  PATCH /api/letters/:id/status`);
   console.log(`  GET  /api/letters`);
   console.log(`  GET  /api/letters/:id`);
-  console.log(`  POST /api/generation-logs                 ← NEW v3`);
-  console.log(`  GET  /api/generation-logs                 ← NEW v3`);
-  console.log(`  PATCH /api/generation-logs/:id/outcome    ← NEW v3`);
+  console.log(`  GET  /api/letters/:id/pdf                 ← v4 PDF`);
+  console.log(`  POST /api/generation-logs                 ← v3`);
+  console.log(`  GET  /api/generation-logs                 ← v3`);
+  console.log(`  PATCH /api/generation-logs/:id/outcome    ← v3`);
+  console.log(`  GET  /api/metrics/generation              ← v4 metrics`);
+  console.log(`  GET  /api/metrics/outcomes                ← v4 metrics`);
+  console.log(`  GET  /api/metrics/quality                 ← v4 metrics`);
+  console.log(`  /api/eval/*                               ← v4 eval framework`);
 });
