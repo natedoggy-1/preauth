@@ -1092,3 +1092,157 @@ export async function clinicUpdateGenerationOutcome(input: {
   });
   return out as { log_id: string; outcome: string };
 }
+
+// ===============================
+// v4: PDF Download
+// ===============================
+export async function clinicDownloadLetterPdf(input: {
+  tenant_id?: number;
+  facility_id: string;
+  letter_id: string;
+}): Promise<string> {
+  const { base, tok } = assertClinicConfigured();
+  const qs = new URLSearchParams({
+    tenant_id: String(input.tenant_id ?? 1),
+    facility_id: input.facility_id,
+  }).toString();
+
+  const res = await fetch(`${base}/api/letters/${input.letter_id}/pdf?${qs}`, {
+    method: "GET",
+    headers: { "X-Bridge-Token": tok },
+  });
+
+  if (!res.ok) throw new Error(`PDF download failed: ${res.status}`);
+
+  const blob = await res.blob();
+  const filename = `PA_letter_${input.letter_id}.pdf`;
+  const localUri = await saveBlobToLocalFile(blob, filename);
+  return localUri;
+}
+
+// ===============================
+// v4: Production Metrics
+// ===============================
+export async function clinicFetchGenerationMetrics(input: {
+  tenant_id?: number;
+  facility_id: string;
+  days?: number;
+}): Promise<any> {
+  const params: Record<string, string> = {
+    tenant_id: String(input.tenant_id ?? 1),
+    facility_id: input.facility_id,
+  };
+  if (input.days) params.days = String(input.days);
+  return clinicGet("/api/metrics/generation", params);
+}
+
+export async function clinicFetchOutcomeMetrics(input: {
+  tenant_id?: number;
+  facility_id: string;
+  days?: number;
+}): Promise<any> {
+  const params: Record<string, string> = {
+    tenant_id: String(input.tenant_id ?? 1),
+    facility_id: input.facility_id,
+  };
+  if (input.days) params.days = String(input.days);
+  return clinicGet("/api/metrics/outcomes", params);
+}
+
+export async function clinicFetchQualityMetrics(input: {
+  tenant_id?: number;
+  facility_id: string;
+  days?: number;
+}): Promise<any> {
+  const params: Record<string, string> = {
+    tenant_id: String(input.tenant_id ?? 1),
+    facility_id: input.facility_id,
+  };
+  if (input.days) params.days = String(input.days);
+  return clinicGet("/api/metrics/quality", params);
+}
+
+// ===============================
+// v4: Evaluation Framework
+// ===============================
+async function clinicPut(path: string, body: any) {
+  const { base } = assertClinicConfigured();
+  const res = await fetch(`${base}${path}`, {
+    method: "PUT",
+    headers: clinicHeaders(),
+    body: JSON.stringify(body),
+  });
+  const text = await res.text().catch(() => "");
+  const out = await parseJsonOrText(text);
+  if (!res.ok) throw new Error(`PUT ${path} ${res.status}: ${typeof out === "string" ? out : JSON.stringify(out)}`);
+  return out;
+}
+
+export async function evalFetchTestCases(params?: {
+  difficulty?: string;
+  service_category?: string;
+}): Promise<any[]> {
+  const qp: Record<string, string> = {};
+  if (params?.difficulty) qp.difficulty = params.difficulty;
+  if (params?.service_category) qp.service_category = params.service_category;
+  const out = await clinicGet("/api/eval/test-cases", qp);
+  return (out as any)?.test_cases || [];
+}
+
+export async function evalCreateTestCase(body: any): Promise<any> {
+  return clinicPost("/api/eval/test-cases", body);
+}
+
+export async function evalFetchRuns(params?: { status?: string; limit?: number }): Promise<any[]> {
+  const qp: Record<string, string> = {};
+  if (params?.status) qp.status = params.status;
+  if (params?.limit) qp.limit = String(params.limit);
+  const out = await clinicGet("/api/eval/runs", qp);
+  return (out as any)?.runs || [];
+}
+
+export async function evalCreateRun(body: {
+  run_name: string;
+  run_type: string;
+  model_id?: string;
+  config?: any;
+}): Promise<any> {
+  return clinicPost("/api/eval/runs", body);
+}
+
+export async function evalFetchRunDetail(run_id: string): Promise<any> {
+  return clinicGet(`/api/eval/runs/${run_id}`);
+}
+
+export async function evalFetchMetrics(run_id: string): Promise<any> {
+  return clinicGet(`/api/eval/metrics/${run_id}`);
+}
+
+export async function evalSubmitFeedback(body: {
+  letter_id?: string;
+  log_id?: string;
+  feedback_type: string;
+  feedback_source?: string;
+  original_text?: string;
+  edited_text?: string;
+  diff_summary?: string;
+  tags?: string[];
+  created_by?: string;
+}): Promise<any> {
+  return clinicPost("/api/eval/feedback", body);
+}
+
+export async function evalFetchFeedback(params?: {
+  letter_id?: string;
+  feedback_type?: string;
+}): Promise<any[]> {
+  const qp: Record<string, string> = {};
+  if (params?.letter_id) qp.letter_id = params.letter_id;
+  if (params?.feedback_type) qp.feedback_type = params.feedback_type;
+  const out = await clinicGet("/api/eval/feedback", qp);
+  return (out as any)?.feedback || [];
+}
+
+export async function evalFetchDashboard(): Promise<any> {
+  return clinicGet("/api/eval/dashboard");
+}

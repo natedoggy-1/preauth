@@ -1,0 +1,269 @@
+{
+  "name": "Ingest v1 — Document Upload + Embedding",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ingest",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "id": "webhook-ingest-1",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [200, 300],
+      "webhookId": "ingest-v1"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract Auth\n// Pull API key from header and validate it.\n\nconst items = $input.all();\nconst item = items[0];\n\nconst headers = item.json?.headers || {};\nconst auth = headers['x-api-key']\n  || headers['X-API-Key']\n  || headers['X-Api-Key']\n  || null;\n\nif (!auth) {\n  throw new Error('Missing X-API-Key header');\n}\n\nreturn [{ json: { ...item.json, _auth: { api_key: auth } } }];\n"
+      },
+      "id": "extract-auth-ingest-1",
+      "name": "Extract Auth",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [420, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse Input\n// Extract metadata fields from multipart form data + file content.\n// n8n webhook with rawBody=true puts form fields in body and files in binary.\n\nconst item = $input.first();\nconst body = item.json?.body || item.json || {};\nconst headers = item.json?.headers || {};\n\n// Form field extraction — n8n multipart puts fields directly on body\nconst facility_id = String(body.facility_id || 'FAC-DEMO').trim();\nconst file_id = String(body.file_id || body.doc_id || `ingest_${Date.now()}`).trim();\nconst file_name = String(body.file_name || body.fileName || 'upload.bin').trim();\nconst doc_role = String(body.doc_role || 'doc').trim().toLowerCase();\nconst mime_type = String(body.mime_type || body.mimeType || headers['content-type'] || 'application/octet-stream').trim();\n\n// Optional classification keys\nconst template_key = String(body.template_key || '').trim() || null;\nconst payer_key = String(body.payer_key || '').trim().toLowerCase() || null;\nconst service_key = String(body.service_key || '').trim().toLowerCase() || null;\nconst policy_key = String(body.policy_key || '').trim() || null;\n\n// Extract binary file data if present\nlet fileBuffer = null;\nlet fileBinaryKey = null;\nconst binaryData = item.binary || {};\nconst binaryKeys = Object.keys(binaryData);\nif (binaryKeys.length > 0) {\n  fileBinaryKey = binaryKeys.find(k => k === 'file' || k === 'data') || binaryKeys[0];\n}\n\nreturn [{\n  json: {\n    facility_id,\n    file_id,\n    file_name,\n    doc_role,\n    mime_type,\n    template_key,\n    payer_key,\n    service_key,\n    policy_key,\n    tenant_id: 1,\n    _binaryKey: fileBinaryKey,\n  },\n  binary: item.binary || {},\n}];\n"
+      },
+      "id": "parse-input-ingest-1",
+      "name": "Parse Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [640, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract Text\n// Reads the uploaded file binary and extracts text content.\n// Handles plain text directly. For PDF, does basic text extraction\n// (strips binary control chars, extracts readable strings).\n\nconst item = $input.first();\nconst meta = item.json || {};\nconst binaryKey = meta._binaryKey;\nconst mime = meta.mime_type || '';\n\nlet content_text = '';\n\nif (binaryKey && item.binary && item.binary[binaryKey]) {\n  const binaryItem = item.binary[binaryKey];\n\n  // Get the raw buffer\n  const buffer = await this.helpers.getBinaryDataBuffer(0, binaryKey);\n\n  if (\n    mime.includes('text/') ||\n    mime.includes('application/json') ||\n    mime.includes('text/markdown') ||\n    mime.includes('application/xml')\n  ) {\n    // Plain text files — decode directly\n    content_text = buffer.toString('utf-8');\n  } else if (mime.includes('application/pdf')) {\n    // Basic PDF text extraction\n    // Extract readable ASCII/UTF-8 strings from PDF binary.\n    // This handles simple text-based PDFs. For scanned PDFs,\n    // a dedicated OCR step would be needed.\n    const raw = buffer.toString('utf-8');\n\n    // Try to find text between BT/ET (PDF text objects)\n    const textObjects = [];\n    const btEtRegex = /BT[\\s\\S]*?ET/g;\n    let match;\n    while ((match = btEtRegex.exec(raw)) !== null) {\n      // Extract Tj and TJ operators (text-showing operators)\n      const block = match[0];\n      // Tj: (text string) Tj\n      const tjMatches = block.match(/\\(([^)]*?)\\)\\s*Tj/g) || [];\n      for (const tj of tjMatches) {\n        const inner = tj.match(/\\(([^)]*?)\\)/);\n        if (inner && inner[1]) textObjects.push(inner[1]);\n      }\n      // TJ: array of strings\n      const tjArrayMatches = block.match(/\\[([^\\]]*?)\\]\\s*TJ/g) || [];\n      for (const tja of tjArrayMatches) {\n        const inner = tja.match(/\\(([^)]*?)\\)/g) || [];\n        for (const s of inner) {\n          const m = s.match(/\\(([^)]*?)\\)/);\n          if (m && m[1]) textObjects.push(m[1]);\n        }\n      }\n    }\n\n    if (textObjects.length > 0) {\n      content_text = textObjects.join(' ').replace(/\\\\n/g, '\\n').replace(/\\\\r/g, '').trim();\n    } else {\n      // Fallback: extract any readable string sequences (4+ printable chars)\n      const readable = raw.match(/[\\x20-\\x7E]{4,}/g) || [];\n      content_text = readable\n        .filter(s => !s.match(/^[\\/%<>\\[\\]{}]+$/))\n        .join(' ')\n        .substring(0, 50000)\n        .trim();\n    }\n  } else {\n    // Unknown binary — try to decode as UTF-8, take what we can\n    const raw = buffer.toString('utf-8');\n    const readable = raw.match(/[\\x20-\\x7E]{4,}/g) || [];\n    content_text = readable.join(' ').substring(0, 50000).trim();\n  }\n}\n\n// Truncate to a reasonable max (100k chars)\nif (content_text.length > 100000) {\n  content_text = content_text.substring(0, 100000);\n}\n\nreturn [{\n  json: {\n    ...meta,\n    content_text,\n    content_length: content_text.length,\n  },\n  binary: item.binary || {},\n}];\n"
+      },
+      "id": "extract-text-ingest-1",
+      "name": "Extract Text",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [860, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO {{ $env.CLINIC_SCHEMA || 'demo' }}.documents (\n  tenant_id,\n  facility_id,\n  doc_id,\n  file_name,\n  doc_role,\n  mime_type,\n  content_text,\n  payer_key,\n  service_key,\n  template_key,\n  policy_key,\n  embedding_status\n) VALUES (\n  {{ $json.tenant_id }},\n  '{{ $json.facility_id }}',\n  '{{ $json.file_id }}',\n  '{{ $json.file_name }}',\n  '{{ $json.doc_role }}',\n  '{{ $json.mime_type }}',\n  {{ $json.content_text ? \"'\" + $json.content_text.replace(/'/g, \"''\") + \"'\" : \"NULL\" }},\n  {{ $json.payer_key ? \"'\" + $json.payer_key + \"'\" : \"NULL\" }},\n  {{ $json.service_key ? \"'\" + $json.service_key + \"'\" : \"NULL\" }},\n  {{ $json.template_key ? \"'\" + $json.template_key + \"'\" : \"NULL\" }},\n  {{ $json.policy_key ? \"'\" + $json.policy_key + \"'\" : \"NULL\" }},\n  'pending'\n)\nON CONFLICT (tenant_id, facility_id, doc_id) DO UPDATE SET\n  file_name = EXCLUDED.file_name,\n  doc_role = EXCLUDED.doc_role,\n  mime_type = EXCLUDED.mime_type,\n  content_text = EXCLUDED.content_text,\n  payer_key = EXCLUDED.payer_key,\n  service_key = EXCLUDED.service_key,\n  template_key = EXCLUDED.template_key,\n  policy_key = EXCLUDED.policy_key,\n  embedding_status = 'pending',\n  updated_at = NOW()\nRETURNING doc_id, embedding_status;",
+        "options": {}
+      },
+      "id": "store-db-ingest-1",
+      "name": "Store in DB",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [1080, 300],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Clinic Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Update Related Table\n// If doc_role='template', update demo.letter_templates set template_text\n// If doc_role='policy', update demo.payer_policies set policy_text\n\nconst input = $node['Extract Text'].json || {};\nconst doc_role = input.doc_role || '';\nconst content_text = input.content_text || '';\nconst facility_id = input.facility_id || '';\nconst template_key = input.template_key || null;\nconst policy_key = input.policy_key || null;\nconst tenant_id = input.tenant_id || 1;\nconst schema = $env.CLINIC_SCHEMA || 'demo';\n\nif (doc_role === 'template' && template_key && content_text) {\n  // Update letter_templates with the extracted text\n  const escapedText = content_text.replace(/'/g, \"''\");\n  const query = `UPDATE ${schema}.letter_templates\n    SET template_text = '${escapedText}',\n        updated_at = NOW()\n    WHERE tenant_id = ${tenant_id}\n      AND facility_id = '${facility_id}'\n      AND template_key = '${template_key}';`;\n\n  await this.helpers.httpRequest({\n    method: 'POST',\n    url: 'http://localhost:5678/rest/execute-query',\n    body: { query },\n    headers: { 'Content-Type': 'application/json' },\n    timeout: 10000,\n  }).catch(() => {\n    // Fallback: we'll handle this via a separate Postgres node if needed\n    // This is a best-effort update\n  });\n} else if (doc_role === 'policy' && policy_key && content_text) {\n  // Update payer_policies with the extracted text\n  const escapedText = content_text.replace(/'/g, \"''\");\n  const query = `UPDATE ${schema}.payer_policies\n    SET policy_text = '${escapedText}',\n        updated_at = NOW()\n    WHERE tenant_id = ${tenant_id}\n      AND facility_id = '${facility_id}'\n      AND policy_key = '${policy_key}';`;\n\n  await this.helpers.httpRequest({\n    method: 'POST',\n    url: 'http://localhost:5678/rest/execute-query',\n    body: { query },\n    headers: { 'Content-Type': 'application/json' },\n    timeout: 10000,\n  }).catch(() => {\n    // Best-effort update\n  });\n}\n\nreturn [{\n  json: {\n    ...input,\n    related_table_updated: (doc_role === 'template' && !!template_key) || (doc_role === 'policy' && !!policy_key),\n    related_table: doc_role === 'template' ? 'letter_templates' : doc_role === 'policy' ? 'payer_policies' : null,\n  }\n}];\n"
+      },
+      "id": "update-related-ingest-1",
+      "name": "Update Related Table",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1300, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Generate Embedding\n// Calls Ollama /api/embeddings with model nomic-embed-text.\n// Only runs if PINECONE_ENABLED=true.\n\nconst input = $input.first().json || {};\nconst content_text = input.content_text || '';\n\nconst pineconeEnabled = String($env.PINECONE_ENABLED || 'false').toLowerCase() === 'true';\n\nif (!pineconeEnabled) {\n  return [{\n    json: {\n      ...input,\n      embedding: null,\n      embedding_skipped: true,\n      embedding_reason: 'PINECONE_ENABLED is not true',\n    }\n  }];\n}\n\nif (!content_text || content_text.length < 10) {\n  return [{\n    json: {\n      ...input,\n      embedding: null,\n      embedding_skipped: true,\n      embedding_reason: 'content_text too short for embedding',\n    }\n  }];\n}\n\nconst ollamaUrl = ($env.LLM_URL || 'http://localhost:11434').replace(/\\/api\\/chat$/, '');\nconst model = $env.EMBEDDING_MODEL || 'nomic-embed-text';\n\n// Truncate text for embedding (most models have context limits)\nconst embeddingText = content_text.substring(0, 8000);\n\ntry {\n  const resp = await this.helpers.httpRequest({\n    method: 'POST',\n    url: `${ollamaUrl}/api/embeddings`,\n    body: {\n      model: model,\n      prompt: embeddingText,\n    },\n    headers: { 'Content-Type': 'application/json' },\n    timeout: 30000,\n  });\n\n  const embedding = resp.embedding || [];\n\n  return [{\n    json: {\n      ...input,\n      embedding,\n      embedding_skipped: false,\n      embedding_dimensions: embedding.length,\n    }\n  }];\n} catch (err) {\n  return [{\n    json: {\n      ...input,\n      embedding: null,\n      embedding_skipped: true,\n      embedding_reason: `Ollama embedding failed: ${err.message}`,\n    }\n  }];\n}\n"
+      },
+      "id": "generate-embedding-ingest-1",
+      "name": "Generate Embedding",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1520, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Upsert to Pinecone\n// Upserts the embedding vector + metadata to Pinecone.\n// Only runs if PINECONE_ENABLED=true and we have an embedding.\n\nconst input = $input.first().json || {};\nconst embedding = input.embedding;\n\nconst pineconeEnabled = String($env.PINECONE_ENABLED || 'false').toLowerCase() === 'true';\nconst pineconeHost = $env.PINECONE_HOST || '';\nconst pineconeApiKey = $env.PINECONE_API_KEY || '';\n\nif (!pineconeEnabled || !embedding || !Array.isArray(embedding) || embedding.length === 0) {\n  return [{\n    json: {\n      ...input,\n      pinecone_upserted: false,\n      pinecone_reason: input.embedding_skipped\n        ? (input.embedding_reason || 'embedding was skipped')\n        : 'no embedding vector available',\n    }\n  }];\n}\n\nif (!pineconeHost || !pineconeApiKey) {\n  return [{\n    json: {\n      ...input,\n      pinecone_upserted: false,\n      pinecone_reason: 'PINECONE_HOST or PINECONE_API_KEY not configured',\n    }\n  }];\n}\n\nconst pineconeUrl = pineconeHost.startsWith('http') ? pineconeHost : `https://${pineconeHost}`;\n\n// Build metadata for the vector\nconst metadata = {\n  doc_id: input.file_id || '',\n  file_id: input.file_id || '',\n  file_name: input.file_name || '',\n  facility_id: input.facility_id || '',\n  doc_role: input.doc_role || 'doc',\n  mime_type: input.mime_type || '',\n  tenant_id: input.tenant_id || 1,\n};\n\n// Add role-specific metadata\nif (input.template_key) metadata.template_key = input.template_key;\nif (input.payer_key) metadata.payer_key = input.payer_key;\nif (input.service_key) metadata.service_key = input.service_key;\nif (input.policy_key) metadata.policy_key = input.policy_key;\n\n// Include a truncated text snippet for retrieval\nif (input.content_text) {\n  const snippet = input.content_text.substring(0, 2000);\n  metadata.text = snippet;\n  if (input.doc_role === 'template') metadata.template_text = snippet;\n  if (input.doc_role === 'policy') metadata.policy_text = snippet;\n}\n\n// Vector ID: use file_id for idempotent upserts\nconst vectorId = `${input.facility_id || 'fac'}_${input.file_id || Date.now()}`\n  .replace(/[^a-zA-Z0-9_\\-]/g, '_')\n  .substring(0, 512);\n\ntry {\n  await this.helpers.httpRequest({\n    method: 'POST',\n    url: `${pineconeUrl}/vectors/upsert`,\n    body: {\n      vectors: [\n        {\n          id: vectorId,\n          values: embedding,\n          metadata: metadata,\n        }\n      ],\n    },\n    headers: {\n      'Api-Key': pineconeApiKey,\n      'Content-Type': 'application/json',\n    },\n    timeout: 15000,\n  });\n\n  return [{\n    json: {\n      ...input,\n      pinecone_upserted: true,\n      pinecone_vector_id: vectorId,\n    }\n  }];\n} catch (err) {\n  return [{\n    json: {\n      ...input,\n      pinecone_upserted: false,\n      pinecone_reason: `Pinecone upsert failed: ${err.message}`,\n    }\n  }];\n}\n"
+      },
+      "id": "upsert-pinecone-ingest-1",
+      "name": "Upsert to Pinecone",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1740, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE {{ $env.CLINIC_SCHEMA || 'demo' }}.documents\nSET embedding_status = CASE\n      WHEN {{ $json.pinecone_upserted === true }} THEN 'completed'\n      WHEN {{ $json.embedding_skipped === true }} THEN 'skipped'\n      ELSE 'failed'\n    END,\n    updated_at = NOW()\nWHERE tenant_id = {{ $json.tenant_id }}\n  AND facility_id = '{{ $json.facility_id }}'\n  AND doc_id = '{{ $json.file_id }}'\nRETURNING doc_id, embedding_status;",
+        "options": {}
+      },
+      "id": "update-embedding-status-ingest-1",
+      "name": "Update Embedding Status",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [1960, 300],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Clinic Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"ok\": true,\n  \"file_id\": {{ JSON.stringify($node['Extract Text'].json.file_id || '') }},\n  \"doc_role\": {{ JSON.stringify($node['Extract Text'].json.doc_role || 'doc') }},\n  \"embedding_status\": {{ $node['Upsert to Pinecone'].json.pinecone_upserted === true ? '\"completed\"' : $node['Upsert to Pinecone'].json.embedding_skipped === true ? '\"skipped\"' : '\"failed\"' }},\n  \"content_length\": {{ $node['Extract Text'].json.content_length || 0 }},\n  \"pinecone_upserted\": {{ $node['Upsert to Pinecone'].json.pinecone_upserted === true }},\n  \"related_table_updated\": {{ $node['Update Related Table'].json.related_table_updated === true }}\n}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-ingest-1",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [2180, 300]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Extract Auth",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Auth": {
+      "main": [
+        [
+          {
+            "node": "Parse Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Input": {
+      "main": [
+        [
+          {
+            "node": "Extract Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Text": {
+      "main": [
+        [
+          {
+            "node": "Store in DB",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store in DB": {
+      "main": [
+        [
+          {
+            "node": "Update Related Table",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Related Table": {
+      "main": [
+        [
+          {
+            "node": "Generate Embedding",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Embedding": {
+      "main": [
+        [
+          {
+            "node": "Upsert to Pinecone",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert to Pinecone": {
+      "main": [
+        [
+          {
+            "node": "Update Embedding Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Embedding Status": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": {
+    "instanceId": "clinic-ingest-v1"
+  },
+  "tags": [
+    {
+      "name": "ingest",
+      "id": "10"
+    },
+    {
+      "name": "documents",
+      "id": "11"
+    },
+    {
+      "name": "embedding",
+      "id": "12"
+    },
+    {
+      "name": "pinecone",
+      "id": "4"
+    },
+    {
+      "name": "ollama",
+      "id": "5"
+    }
+  ]
+}

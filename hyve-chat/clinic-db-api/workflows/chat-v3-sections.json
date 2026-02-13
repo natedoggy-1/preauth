@@ -49,67 +49,13 @@
     },
     {
       "parameters": {
-        "jsCode": "// Build RAG Query\n// Constructs the search query for the RAG vector store.\n\nconst norm = $input.item.json || {};\nconst ctx = norm.ctx || {};\n\nconst payer_key = ctx.payer_key || null;\nconst service_key = ctx.service_key || null;\nconst template_key = ctx.template_key || null;\nconst policy_key = ctx.policy_key || null;\nconst message = ctx.message || '';\nconst intent = ctx.intent || 'generate_preauth_letter';\n\n// Build a composite search query from available context\nconst queryParts = [];\nif (payer_key) queryParts.push(`payer:${payer_key}`);\nif (service_key) queryParts.push(`service:${service_key}`);\nif (template_key) queryParts.push(`template:${template_key}`);\nif (policy_key) queryParts.push(`policy:${policy_key}`);\nif (message) queryParts.push(message);\n\nconst rag_query = queryParts.join(' ').trim() || 'prior authorization letter template';\n\nreturn [{\n  json: {\n    ...norm,\n    rag_query,\n    payer_key,\n    service_key,\n    template_key,\n    policy_key,\n    file_ids: ctx.file_ids || [],\n  }\n}];\n"
+        "jsCode": "// Build RAG Query + Pinecone Lookup\n// If PINECONE_ENABLED, generates embedding via Ollama and queries Pinecone.\n// Otherwise returns empty results (DB lookup will handle it).\n\nconst norm = $input.item.json || {};\nconst ctx = norm.ctx || {};\n\nconst payer_key = ctx.payer_key || null;\nconst service_key = ctx.service_key || null;\nconst template_key = ctx.template_key || null;\nconst policy_key = ctx.policy_key || null;\nconst message = ctx.message || '';\nconst facility_id = ctx.facility_id || 'FAC-DEMO';\n\nconst pineconeEnabled = String($env.PINECONE_ENABLED || 'false').toLowerCase() === 'true';\nconst pineconeHost = $env.PINECONE_HOST || '';\nconst pineconeApiKey = $env.PINECONE_API_KEY || '';\nconst ollamaUrl = $env.LLM_URL || 'http://localhost:11434';\n\n// Build query text\nconst queryParts = [];\nif (payer_key) queryParts.push(`payer:${payer_key}`);\nif (service_key) queryParts.push(`service:${service_key}`);\nif (template_key) queryParts.push(`template:${template_key}`);\nif (policy_key) queryParts.push(`policy:${policy_key}`);\nif (message) queryParts.push(message);\nconst rag_query = queryParts.join(' ').trim() || 'prior authorization letter template';\n\nlet template = { template_text: '', template_key: null, from_file_id: null, score: null };\nlet policy = { policy_text: '', policy_key: null, from_file_id: null, score: null };\n\nif (pineconeEnabled && pineconeHost && pineconeApiKey) {\n  try {\n    // Generate embedding via Ollama\n    const embedUrl = ollamaUrl.replace(/\\/api\\/chat$/, '') + '/api/embeddings';\n    const embedResp = await this.helpers.httpRequest({\n      method: 'POST',\n      url: embedUrl,\n      body: { model: $env.EMBEDDING_MODEL || 'nomic-embed-text', prompt: rag_query },\n      headers: { 'Content-Type': 'application/json' },\n      timeout: 15000,\n    });\n    const embedding = embedResp.embedding || [];\n\n    if (embedding.length > 0) {\n      // Query Pinecone for templates\n      const pineconeUrl = pineconeHost.startsWith('http') ? pineconeHost : `https://${pineconeHost}`;\n      const templateResp = await this.helpers.httpRequest({\n        method: 'POST',\n        url: `${pineconeUrl}/query`,\n        body: {\n          vector: embedding,\n          topK: 3,\n          filter: { doc_role: { '$eq': 'template' }, facility_id: { '$eq': facility_id } },\n          includeMetadata: true,\n        },\n        headers: { 'Api-Key': pineconeApiKey, 'Content-Type': 'application/json' },\n        timeout: 10000,\n      });\n\n      const topT = templateResp?.matches?.[0];\n      if (topT?.metadata) {\n        template = {\n          template_text: topT.metadata.template_text || topT.metadata.text || topT.metadata.content || '',\n          template_key: topT.metadata.template_key || null,\n          from_file_id: topT.metadata.file_id || null,\n          score: topT.score || null,\n        };\n      }\n\n      // Query Pinecone for policies\n      const policyResp = await this.helpers.httpRequest({\n        method: 'POST',\n        url: `${pineconeUrl}/query`,\n        body: {\n          vector: embedding,\n          topK: 3,\n          filter: { doc_role: { '$eq': 'policy' }, facility_id: { '$eq': facility_id } },\n          includeMetadata: true,\n        },\n        headers: { 'Api-Key': pineconeApiKey, 'Content-Type': 'application/json' },\n        timeout: 10000,\n      });\n\n      const topP = policyResp?.matches?.[0];\n      if (topP?.metadata) {\n        policy = {\n          policy_text: topP.metadata.policy_text || topP.metadata.text || topP.metadata.content || '',\n          policy_key: topP.metadata.policy_key || null,\n          from_file_id: topP.metadata.file_id || null,\n          score: topP.score || null,\n        };\n      }\n    }\n  } catch (err) {\n    // RAG failure is non-fatal — DB lookup will fill in\n    console.log('Pinecone RAG failed (non-fatal):', err.message);\n  }\n}\n\nreturn [{\n  json: {\n    ...norm,\n    rag_query,\n    payer_key,\n    service_key,\n    template_key,\n    policy_key,\n    file_ids: ctx.file_ids || [],\n    template,\n    policy,\n    payer_key_rag: policy.payer_key || template.payer_key || null,\n    service_key_rag: template.service_key || policy.service_key || null,\n  }\n}];\n"
       },
       "id": "build-rag-query-1",
-      "name": "Build RAG Query",
+      "name": "RAG Lookup (Pinecone)",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [1080, 300]
-    },
-    {
-      "parameters": {
-        "url": "={{ $env.QDRANT_URL || 'http://localhost:6333' }}/collections/{{ $env.QDRANT_COLLECTION || 'clinic_docs' }}/points/search",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={\n  \"vector\": {{ JSON.stringify($json.embedding || []) }},\n  \"filter\": {\n    \"must\": [\n      { \"key\": \"doc_role\", \"match\": { \"value\": \"template\" } },\n      { \"key\": \"facility_id\", \"match\": { \"value\": \"{{ $json.ctx?.facility_id || 'FAC-DEMO' }}\" } }\n    ]\n  },\n  \"limit\": 3,\n  \"with_payload\": true\n}",
-        "options": {
-          "timeout": 10000
-        }
-      },
-      "id": "rag-template-1",
-      "name": "RAG: Load Template",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4,
-      "position": [1300, 180]
-    },
-    {
-      "parameters": {
-        "url": "={{ $env.QDRANT_URL || 'http://localhost:6333' }}/collections/{{ $env.QDRANT_COLLECTION || 'clinic_docs' }}/points/search",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={\n  \"vector\": {{ JSON.stringify($json.embedding || []) }},\n  \"filter\": {\n    \"must\": [\n      { \"key\": \"doc_role\", \"match\": { \"value\": \"policy\" } },\n      { \"key\": \"facility_id\", \"match\": { \"value\": \"{{ $json.ctx?.facility_id || 'FAC-DEMO' }}\" } }\n    ]\n  },\n  \"limit\": 3,\n  \"with_payload\": true\n}",
-        "options": {
-          "timeout": 10000
-        }
-      },
-      "id": "rag-policy-1",
-      "name": "RAG: Load Policy",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4,
-      "position": [1300, 420]
-    },
-    {
-      "parameters": {
-        "mode": "combine",
-        "combinationMode": "mergeByPosition",
-        "options": {}
-      },
-      "id": "merge-rag-1",
-      "name": "Merge",
-      "type": "n8n-nodes-base.merge",
-      "typeVersion": 2,
-      "position": [1520, 300]
-    },
-    {
-      "parameters": {
-        "jsCode": "// Normalize + format response\n// Takes the merged RAG results (template + policy) and normalizes them\n// into a consistent shape for downstream nodes.\n\nconst items = $input.all();\nconst templateItem = items[0]?.json || {};\nconst policyItem = items[1]?.json || items[0]?.json || {};\n\n// RAG template results\nconst templateResults = Array.isArray(templateItem.result)\n  ? templateItem.result\n  : Array.isArray(templateItem)\n    ? templateItem\n    : [];\n\nconst topTemplate = templateResults[0]?.payload || templateResults[0] || {};\n\n// RAG policy results\nconst policyResults = Array.isArray(policyItem.result)\n  ? policyItem.result\n  : Array.isArray(policyItem)\n    ? policyItem\n    : [];\n\nconst topPolicy = policyResults[0]?.payload || policyResults[0] || {};\n\nreturn [{\n  json: {\n    template: {\n      template_text: topTemplate.template_text || topTemplate.text || topTemplate.content || '',\n      template_key: topTemplate.template_key || topTemplate.metadata?.template_key || null,\n      from_file_id: topTemplate.file_id || topTemplate.metadata?.file_id || null,\n      score: templateResults[0]?.score || null,\n    },\n    policy: {\n      policy_text: topPolicy.policy_text || topPolicy.text || topPolicy.content || '',\n      policy_key: topPolicy.policy_key || topPolicy.metadata?.policy_key || null,\n      from_file_id: topPolicy.file_id || topPolicy.metadata?.file_id || null,\n      score: policyResults[0]?.score || null,\n    },\n    payer_key: topPolicy.payer_key || topTemplate.payer_key || null,\n    service_key: topTemplate.service_key || topPolicy.service_key || null,\n  }\n}];\n"
-      },
-      "id": "normalize-format-1",
-      "name": "Normalize + format response",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [1740, 300]
     },
     {
       "parameters": {
@@ -119,7 +65,7 @@
       "name": "SQL Vars",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1960, 300]
+      "position": [1300, 300]
     },
     {
       "parameters": {
@@ -131,7 +77,7 @@
       "name": "Load Template",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2,
-      "position": [2180, 180],
+      "position": [1520, 180],
       "credentials": {
         "postgres": {
           "id": "1",
@@ -149,7 +95,7 @@
       "name": "DB: Load Policy",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2,
-      "position": [2180, 420],
+      "position": [1520, 420],
       "credentials": {
         "postgres": {
           "id": "1",
@@ -163,68 +109,59 @@
         "combinationMode": "mergeByPosition",
         "options": {}
       },
-      "id": "merge-rag-policy-1",
-      "name": "Merge (RAG + Policy)",
+      "id": "merge-db-1",
+      "name": "Merge DB Results",
       "type": "n8n-nodes-base.merge",
       "typeVersion": 2,
-      "position": [2400, 300]
+      "position": [1740, 300]
     },
     {
       "parameters": {
-        "jsCode": "// Pick Final Text (DB > RAG)\n// DB text is authoritative. Falls back to RAG if DB has nothing.\n// Also passes through section payloads if present.\n\nfunction getNodeJson(name) {\n  try { return $node[name].json; } catch { return null; }\n}\nfunction safeItems(name) {\n  try { return $items(name) || []; } catch { return []; }\n}\n\nconst norm = getNodeJson(\"Validate + normalize input\") || {};\nconst ctx = norm.ctx || {};\n\n// --- DB sources ---\nconst dbTemplateItems = safeItems(\"Load Template\");\nconst dbPolicyItems = safeItems(\"DB: Load Policy\");\n\nconst dbTemplate = dbTemplateItems[0]?.json || {};\nconst dbPolicy = dbPolicyItems[0]?.json || {};\n\nconst dbTemplateText = String(dbTemplate.template_text || \"\").trim();\nconst dbPolicyText = String(dbPolicy.policy_text || \"\").trim();\n\n// --- RAG sources (from Normalize + format response) ---\nconst rag = getNodeJson(\"Normalize + format response\") || {};\n\nconst ragTemplateText = String(rag?.template?.template_text || \"\").trim();\nconst ragPolicyText = String(rag?.policy?.policy_text || \"\").trim();\n\n// --- Passthrough text from request body ---\nconst passthroughTemplate = String(ctx.template_text || \"\").trim();\nconst passthroughPolicy = String(ctx.policy_text || \"\").trim();\n\n// --- Pick best: passthrough > DB > RAG ---\nconst template_text = passthroughTemplate || dbTemplateText || ragTemplateText;\nconst policy_text = passthroughPolicy || dbPolicyText || ragPolicyText;\n\nconst template_source = passthroughTemplate ? \"passthrough\" : dbTemplateText ? \"db\" : ragTemplateText ? \"rag\" : \"none\";\nconst policy_source = passthroughPolicy ? \"passthrough\" : dbPolicyText ? \"db\" : ragPolicyText ? \"rag\" : \"none\";\n\n// --- Section payloads (from non_phi_packet.sections or body.sections) ---\nconst packet = norm.non_phi_packet || norm?.req?.body?.non_phi_packet || {};\nconst sections = Array.isArray(packet.sections) ? packet.sections : \n                 Array.isArray(norm?.req?.body?.sections) ? norm.req.body.sections : [];\n\n// --- Template + policy metadata ---\nconst template_key = dbTemplate.template_key || rag?.template?.template_key || ctx.template_key || null;\nconst policy_key = dbPolicy.policy_key || rag?.policy?.metadata?.policy_key || ctx.policy_key || null;\n\nreturn [{\n  json: {\n    success: !!template_text,\n    \n    request_id: ctx.request_id || norm.request_id || null,\n    tenant_id: ctx.tenant_id || norm.tenant_id || null,\n    facility_id: ctx.facility_id || norm.facility_id || null,\n\n    payer_key: ctx.payer_key || rag?.payer_key || null,\n    service_key: ctx.service_key || rag?.service_key || null,\n\n    template_text,\n    policy_text,\n    template_source,\n    policy_source,\n\n    template_key,\n    policy_key,\n    \n    template_file_id: dbTemplate.file_id || rag?.template?.from_file_id || null,\n    policy_file_id: dbPolicy.file_id || rag?.policy?.from_file_id || null,\n\n    // Section data for section-based generation\n    has_sections: sections.length > 0,\n    sections,\n    \n    // Payer policy criteria from the generate-sections endpoint\n    policy_criteria: packet.policy_criteria || null,\n\n    _debug: {\n      template_source,\n      policy_source,\n      db_template_len: dbTemplateText.length,\n      rag_template_len: ragTemplateText.length,\n      db_policy_len: dbPolicyText.length,\n      rag_policy_len: ragPolicyText.length,\n      section_count: sections.length,\n    },\n  }\n}];\n"
+        "jsCode": "// Pick Final Text (DB > RAG)\n// DB text is authoritative. Falls back to RAG if DB has nothing.\n// Also passes through section payloads if present.\n\nfunction getNodeJson(name) {\n  try { return $node[name].json; } catch { return null; }\n}\nfunction safeItems(name) {\n  try { return $items(name) || []; } catch { return []; }\n}\n\nconst norm = getNodeJson(\"Validate + normalize input\") || {};\nconst ctx = norm.ctx || {};\n\n// --- DB sources ---\nconst dbTemplateItems = safeItems(\"Load Template\");\nconst dbPolicyItems = safeItems(\"DB: Load Policy\");\n\nconst dbTemplate = dbTemplateItems[0]?.json || {};\nconst dbPolicy = dbPolicyItems[0]?.json || {};\n\nconst dbTemplateText = String(dbTemplate.template_text || \"\").trim();\nconst dbPolicyText = String(dbPolicy.policy_text || \"\").trim();\n\n// --- RAG sources (from Pinecone lookup) ---\nconst rag = getNodeJson(\"RAG Lookup (Pinecone)\") || {};\n\nconst ragTemplateText = String(rag?.template?.template_text || \"\").trim();\nconst ragPolicyText = String(rag?.policy?.policy_text || \"\").trim();\n\n// --- Passthrough text from request body ---\nconst passthroughTemplate = String(ctx.template_text || \"\").trim();\nconst passthroughPolicy = String(ctx.policy_text || \"\").trim();\n\n// --- Pick best: passthrough > DB > RAG ---\nconst template_text = passthroughTemplate || dbTemplateText || ragTemplateText;\nconst policy_text = passthroughPolicy || dbPolicyText || ragPolicyText;\n\nconst template_source = passthroughTemplate ? \"passthrough\" : dbTemplateText ? \"db\" : ragTemplateText ? \"rag\" : \"none\";\nconst policy_source = passthroughPolicy ? \"passthrough\" : dbPolicyText ? \"db\" : ragPolicyText ? \"rag\" : \"none\";\n\n// --- Section payloads (from non_phi_packet.sections or body.sections) ---\nconst packet = norm.non_phi_packet || norm?.req?.body?.non_phi_packet || {};\nconst sections = Array.isArray(packet.sections) ? packet.sections : \n                 Array.isArray(norm?.req?.body?.sections) ? norm.req.body.sections : [];\n\n// --- Template + policy metadata ---\nconst template_key = dbTemplate.template_key || rag?.template?.template_key || ctx.template_key || null;\nconst policy_key = dbPolicy.policy_key || rag?.policy?.policy_key || ctx.policy_key || null;\n\nreturn [{\n  json: {\n    success: !!template_text,\n    \n    request_id: ctx.request_id || norm.request_id || null,\n    tenant_id: ctx.tenant_id || norm.tenant_id || null,\n    facility_id: ctx.facility_id || norm.facility_id || null,\n\n    payer_key: ctx.payer_key || rag?.payer_key_rag || null,\n    service_key: ctx.service_key || rag?.service_key_rag || null,\n\n    template_text,\n    policy_text,\n    template_source,\n    policy_source,\n\n    template_key,\n    policy_key,\n    \n    template_file_id: dbTemplate.file_id || rag?.template?.from_file_id || null,\n    policy_file_id: dbPolicy.file_id || rag?.policy?.from_file_id || null,\n\n    // Section data for section-based generation\n    has_sections: sections.length > 0,\n    sections,\n    \n    // Payer policy criteria from the generate-sections endpoint\n    policy_criteria: packet.policy_criteria || null,\n\n    _debug: {\n      template_source,\n      policy_source,\n      db_template_len: dbTemplateText.length,\n      rag_template_len: ragTemplateText.length,\n      db_policy_len: dbPolicyText.length,\n      rag_policy_len: ragPolicyText.length,\n      section_count: sections.length,\n    },\n  }\n}];\n"
       },
       "id": "pick-final-text-1",
       "name": "Pick Final Text (DB > RAG)",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2128, 48]
+      "position": [1960, 300]
     },
     {
       "parameters": {
-        "jsCode": "// Build Letter Prompt (v3 — section-aware)\n// Supports both monolithic and section-based generation.\n// Section data comes from Pick Final Text (DB > RAG) node.\n\nfunction getNodeJson(name) {\n  try { return $node[name].json; } catch { return null; }\n}\nfunction isObj(x) { return x && typeof x === \"object\" && !Array.isArray(x); }\nfunction pick(...vals) {\n  for (const v of vals) {\n    if (v === null || v === undefined) continue;\n    if (typeof v === \"string\") { const s = v.trim(); if (s) return s; continue; }\n    return v;\n  }\n  return null;\n}\nfunction htmlDecode(s) {\n  return String(s || \"\")\n    .replace(/&#0;/g, \"\").replace(/&gt;/g, \">\").replace(/&lt;/g, \"<\")\n    .replace(/&amp;/g, \"&\").replace(/&quot;/g, \"\\\"\").replace(/&#39;/g, \"'\")\n    .replace(/&mdash;/g, \"\\u2014\").replace(/&ndash;/g, \"\\u2013\");\n}\n\n// --- Normalized input ---\nconst norm = getNodeJson(\"Validate + normalize input\") || {};\nconst ctx = (norm && isObj(norm.ctx)) ? norm.ctx : (isObj($json.ctx) ? $json.ctx : {});\n\n// --- Pick Final Text (DB > RAG) ---\nconst finalText = getNodeJson(\"Pick Final Text (DB > RAG)\") || null;\nconst ragNode = finalText || getNodeJson(\"Normalize + format response\") || null;\nconst root = $json || {};\n\n// --- Template + Policy text ---\nconst template_text = htmlDecode(String(\n  pick(\n    finalText?.template_text,\n    ragNode?.template?.template_text,\n    ragNode?.template_text,\n    root?.template?.template_text,\n    root?.template_text\n  ) || \"\"\n)).trim();\n\nconst policy_text = htmlDecode(String(\n  pick(\n    finalText?.policy_text,\n    ragNode?.policy?.policy_text,\n    ragNode?.policy_text,\n    root?.policy?.policy_text,\n    root?.policy_text\n  ) || \"\"\n)).trim();\n\n// --- NON-PHI PACKET ---\nconst non_phi_packet = pick(\n  norm?.non_phi_packet, norm?.req?.body?.non_phi_packet, norm?.req?.non_phi_packet,\n  root?.non_phi_packet, root?.req?.body?.non_phi_packet, ctx?.non_phi_packet, null\n) || null;\n\n// --- Sections (from Pick Final Text or packet) ---\nconst sections = finalText?.sections || non_phi_packet?.sections || [];\nconst has_sections = Array.isArray(sections) && sections.length > 0;\nconst policy_criteria = finalText?.policy_criteria || non_phi_packet?.policy_criteria || null;\n\n// --- Validate ---\nif (!template_text) throw new Error(\"Missing template_text.\");\nif (!non_phi_packet) throw new Error(\"Missing non_phi_packet.\");\n\n// --- Request details ---\nconst req = {\n  requested_dos: ctx.requested_dos ?? null,\n  cpt_code: ctx.cpt_code ?? null,\n  icd10_code: ctx.icd10_code ?? null,\n  reason: ctx.free_text_reason ?? ctx.reason ?? null,\n};\n\n// --- Build prompts ---\nlet system, user;\n\nif (has_sections) {\n  // SECTION-BASED GENERATION\n  system = [\n    \"You are a clinical prior-authorization letter generator.\",\n    \"You will receive SECTIONS to generate. Each section has an instruction and a scaffold showing the expected format.\",\n    \"Generate EACH section following its instruction. Use the patient data and policy criteria provided.\",\n    \"Maintain a professional, clinical tone throughout.\",\n    \"Use NON_PHI_PACKET for patient details, coverage, diagnoses, imaging, therapy, meds.\",\n    \"Use POLICY_CRITERIA to align evidence against each requirement.\",\n    'If data is missing, write \\\"[MISSING: ...]\\\" rather than inventing.',\n    \"Return the COMPLETE letter with all sections assembled in order.\",\n    \"Return ONLY the final letter text. No JSON. No markdown fences.\",\n  ].join(\"\\n\");\n\n  const sectionPrompts = sections.map((sec, idx) => {\n    const parts = [`--- SECTION ${idx + 1}: ${sec.section_name.toUpperCase()} ---`];\n    parts.push(`Instruction: ${sec.instruction_prompt}`);\n    if (sec.scaffold_text) parts.push(`Format/Scaffold:\\n${sec.scaffold_text}`);\n    if (sec.policy_criteria) parts.push(`Relevant Policy Criteria:\\n${JSON.stringify(sec.policy_criteria, null, 2)}`);\n    return parts.join(\"\\n\");\n  });\n\n  user = [\n    \"OVERALL TEMPLATE REFERENCE:\",\n    template_text,\n    \"\",\n    \"POLICY_CRITERIA (overall):\",\n    policy_criteria ? JSON.stringify(policy_criteria, null, 2) : (policy_text || \"[none]\"),\n    \"\",\n    \"SECTIONS TO GENERATE:\",\n    ...sectionPrompts,\n    \"\",\n    \"NON_PHI_PACKET:\",\n    JSON.stringify(non_phi_packet, null, 2),\n  ].join(\"\\n\");\n} else {\n  // MONOLITHIC GENERATION (original behavior)\n  system = [\n    \"You are a clinical prior-authorization letter generator.\",\n    \"Follow the TEMPLATE exactly for structure and field placement.\",\n    \"Use NON_PHI_PACKET for patient details, coverage, diagnoses, imaging, therapy, meds, and notes.\",\n    \"Use POLICY_CRITERIA as requirements; cite relevant criteria when possible.\",\n    'If something is missing, write \\\"[MISSING: ...]\\\" rather than inventing.',\n    \"Return ONLY the final letter text. No JSON. No markdown fences.\",\n  ].join(\"\\n\");\n\n  user = [\n    \"TEMPLATE:\", template_text, \"\",\n    \"POLICY_CRITERIA (may be empty):\", policy_text || \"[none]\", \"\",\n    \"REQUEST_DETAILS:\", JSON.stringify(req, null, 2), \"\",\n    \"NON_PHI_PACKET:\", JSON.stringify(non_phi_packet, null, 2),\n  ].join(\"\\n\");\n}\n\n// --- File IDs ---\nconst file_ids =\n  (Array.isArray(ctx.file_ids) ? ctx.file_ids : null) ||\n  (Array.isArray(norm?.req?.body?.file_ids) ? norm.req.body.file_ids : null) ||\n  [];\n\nreturn [{\n  json: {\n    request_id: ctx.request_id ?? norm?.request_id ?? null,\n    tenant_id: ctx.tenant_id ?? norm?.tenant_id ?? null,\n    facility_id: ctx.facility_id ?? norm?.facility_id ?? null,\n    patient_id: ctx.patient_id ?? null,\n    thread_id: ctx.thread_id ?? null,\n\n    payer_key: ctx.payer_key ?? ragNode?.payer_key ?? null,\n    service_key: ctx.service_key ?? ragNode?.service_key ?? null,\n    template_key: ctx.template_key ?? finalText?.template_key ?? null,\n    policy_key: ctx.policy_key ?? finalText?.policy_key ?? null,\n\n    template_file_id: finalText?.template_file_id ?? ragNode?.template?.from_file_id ?? null,\n    policy_file_id: finalText?.policy_file_id ?? ragNode?.policy?.from_file_id ?? null,\n\n    file_ids,\n    prompt: { system, user },\n    generation_mode: has_sections ? \"section_based\" : \"monolithic\",\n    section_count: sections.length,\n\n    _debug: {\n      template_from: finalText ? \"Pick Final Text (DB > RAG)\" : \"Normalize + format response\",\n      non_phi_from: norm?.non_phi_packet ? \"norm.non_phi_packet\" : \"fallback\",\n      had_policy: !!policy_text,\n      generation_mode: has_sections ? \"section_based\" : \"monolithic\",\n      section_count: sections.length,\n    },\n  }\n}];\n"
+        "jsCode": "// Build Letter Prompt (v3 — section-aware)\n// Supports both monolithic and section-based generation.\n// Section data comes from Pick Final Text (DB > RAG) node.\n\nfunction getNodeJson(name) {\n  try { return $node[name].json; } catch { return null; }\n}\nfunction isObj(x) { return x && typeof x === \"object\" && !Array.isArray(x); }\nfunction pick(...vals) {\n  for (const v of vals) {\n    if (v === null || v === undefined) continue;\n    if (typeof v === \"string\") { const s = v.trim(); if (s) return s; continue; }\n    return v;\n  }\n  return null;\n}\nfunction htmlDecode(s) {\n  return String(s || \"\")\n    .replace(/&#0;/g, \"\").replace(/&gt;/g, \">\").replace(/&lt;/g, \"<\")\n    .replace(/&amp;/g, \"&\").replace(/&quot;/g, \"\\\"\").replace(/&#39;/g, \"'\")\n    .replace(/&mdash;/g, \"\\u2014\").replace(/&ndash;/g, \"\\u2013\");\n}\n\n// --- Normalized input ---\nconst norm = getNodeJson(\"Validate + normalize input\") || {};\nconst ctx = (norm && isObj(norm.ctx)) ? norm.ctx : (isObj($json.ctx) ? $json.ctx : {});\n\n// --- Pick Final Text (DB > RAG) ---\nconst finalText = getNodeJson(\"Pick Final Text (DB > RAG)\") || null;\nconst ragNode = getNodeJson(\"RAG Lookup (Pinecone)\") || null;\nconst root = $json || {};\n\n// --- Template + Policy text ---\nconst template_text = htmlDecode(String(\n  pick(\n    finalText?.template_text,\n    ragNode?.template?.template_text,\n    root?.template?.template_text,\n    root?.template_text\n  ) || \"\"\n)).trim();\n\nconst policy_text = htmlDecode(String(\n  pick(\n    finalText?.policy_text,\n    ragNode?.policy?.policy_text,\n    root?.policy?.policy_text,\n    root?.policy_text\n  ) || \"\"\n)).trim();\n\n// --- NON-PHI PACKET ---\nconst non_phi_packet = pick(\n  norm?.non_phi_packet, norm?.req?.body?.non_phi_packet, norm?.req?.non_phi_packet,\n  root?.non_phi_packet, root?.req?.body?.non_phi_packet, ctx?.non_phi_packet, null\n) || null;\n\n// --- Sections (from Pick Final Text or packet) ---\nconst sections = finalText?.sections || non_phi_packet?.sections || [];\nconst has_sections = Array.isArray(sections) && sections.length > 0;\nconst policy_criteria = finalText?.policy_criteria || non_phi_packet?.policy_criteria || null;\n\n// --- Validate ---\nif (!template_text) throw new Error(\"Missing template_text.\");\nif (!non_phi_packet) throw new Error(\"Missing non_phi_packet.\");\n\n// --- Request details ---\nconst req = {\n  requested_dos: ctx.requested_dos ?? null,\n  cpt_code: ctx.cpt_code ?? null,\n  icd10_code: ctx.icd10_code ?? null,\n  reason: ctx.free_text_reason ?? ctx.reason ?? null,\n};\n\n// --- Build prompts ---\nlet system, user;\n\nif (has_sections) {\n  // SECTION-BASED GENERATION\n  system = [\n    \"You are a clinical prior-authorization letter generator.\",\n    \"You will receive SECTIONS to generate. Each section has an instruction and a scaffold showing the expected format.\",\n    \"Generate EACH section following its instruction. Use the patient data and policy criteria provided.\",\n    \"Maintain a professional, clinical tone throughout.\",\n    \"Use NON_PHI_PACKET for patient details, coverage, diagnoses, imaging, therapy, meds.\",\n    \"Use POLICY_CRITERIA to align evidence against each requirement.\",\n    'If data is missing, write \\\"[MISSING: ...]\\\" rather than inventing.',\n    \"Return the COMPLETE letter with all sections assembled in order.\",\n    \"Return ONLY the final letter text. No JSON. No markdown fences.\",\n  ].join(\"\\n\");\n\n  const sectionPrompts = sections.map((sec, idx) => {\n    const parts = [`--- SECTION ${idx + 1}: ${sec.section_name.toUpperCase()} ---`];\n    parts.push(`Instruction: ${sec.instruction_prompt}`);\n    if (sec.scaffold_text) parts.push(`Format/Scaffold:\\n${sec.scaffold_text}`);\n    if (sec.policy_criteria) parts.push(`Relevant Policy Criteria:\\n${JSON.stringify(sec.policy_criteria, null, 2)}`);\n    return parts.join(\"\\n\");\n  });\n\n  user = [\n    \"OVERALL TEMPLATE REFERENCE:\",\n    template_text,\n    \"\",\n    \"POLICY_CRITERIA (overall):\",\n    policy_criteria ? JSON.stringify(policy_criteria, null, 2) : (policy_text || \"[none]\"),\n    \"\",\n    \"SECTIONS TO GENERATE:\",\n    ...sectionPrompts,\n    \"\",\n    \"NON_PHI_PACKET:\",\n    JSON.stringify(non_phi_packet, null, 2),\n  ].join(\"\\n\");\n} else {\n  // MONOLITHIC GENERATION (original behavior)\n  system = [\n    \"You are a clinical prior-authorization letter generator.\",\n    \"Follow the TEMPLATE exactly for structure and field placement.\",\n    \"Use NON_PHI_PACKET for patient details, coverage, diagnoses, imaging, therapy, meds, and notes.\",\n    \"Use POLICY_CRITERIA as requirements; cite relevant criteria when possible.\",\n    'If something is missing, write \\\"[MISSING: ...]\\\" rather than inventing.',\n    \"Return ONLY the final letter text. No JSON. No markdown fences.\",\n  ].join(\"\\n\");\n\n  user = [\n    \"TEMPLATE:\", template_text, \"\",\n    \"POLICY_CRITERIA (may be empty):\", policy_text || \"[none]\", \"\",\n    \"REQUEST_DETAILS:\", JSON.stringify(req, null, 2), \"\",\n    \"NON_PHI_PACKET:\", JSON.stringify(non_phi_packet, null, 2),\n  ].join(\"\\n\");\n}\n\n// --- File IDs ---\nconst file_ids =\n  (Array.isArray(ctx.file_ids) ? ctx.file_ids : null) ||\n  (Array.isArray(norm?.req?.body?.file_ids) ? norm.req.body.file_ids : null) ||\n  [];\n\nreturn [{\n  json: {\n    request_id: ctx.request_id ?? norm?.request_id ?? null,\n    tenant_id: ctx.tenant_id ?? norm?.tenant_id ?? null,\n    facility_id: ctx.facility_id ?? norm?.facility_id ?? null,\n    patient_id: ctx.patient_id ?? null,\n    thread_id: ctx.thread_id ?? null,\n\n    payer_key: ctx.payer_key ?? ragNode?.payer_key_rag ?? null,\n    service_key: ctx.service_key ?? ragNode?.service_key_rag ?? null,\n    template_key: ctx.template_key ?? finalText?.template_key ?? null,\n    policy_key: ctx.policy_key ?? finalText?.policy_key ?? null,\n\n    template_file_id: finalText?.template_file_id ?? ragNode?.template?.from_file_id ?? null,\n    policy_file_id: finalText?.policy_file_id ?? ragNode?.policy?.from_file_id ?? null,\n\n    file_ids,\n    prompt: { system, user },\n    generation_mode: has_sections ? \"section_based\" : \"monolithic\",\n    section_count: sections.length,\n\n    _debug: {\n      template_from: finalText ? \"Pick Final Text (DB > RAG)\" : \"RAG Lookup (Pinecone)\",\n      non_phi_from: norm?.non_phi_packet ? \"norm.non_phi_packet\" : \"fallback\",\n      had_policy: !!policy_text,\n      generation_mode: has_sections ? \"section_based\" : \"monolithic\",\n      section_count: sections.length,\n    },\n  }\n}];\n"
       },
       "id": "build-letter-prompt-1",
       "name": "Build Letter Prompt",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2840, 300]
+      "position": [2180, 300]
     },
     {
       "parameters": {
-        "model": "={{ $env.LLM_MODEL || 'llama3' }}",
-        "messages": {
-          "values": [
-            {
-              "role": "system",
-              "content": "={{ $json.prompt.system }}"
-            },
-            {
-              "role": "user",
-              "content": "={{ $json.prompt.user }}"
-            }
-          ]
-        },
+        "method": "POST",
+        "url": "={{ $env.LLM_URL || 'http://localhost:11434/api/chat' }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"{{ $env.LLM_MODEL || 'llama3' }}\",\n  \"messages\": [\n    { \"role\": \"system\", \"content\": {{ JSON.stringify($json.prompt.system) }} },\n    { \"role\": \"user\", \"content\": {{ JSON.stringify($json.prompt.user) }} }\n  ],\n  \"stream\": false,\n  \"options\": {\n    \"temperature\": 0.3,\n    \"num_predict\": 8192\n  }\n}",
         "options": {
-          "temperature": 0.3,
-          "maxTokens": 4096
+          "timeout": 120000
         }
       },
       "id": "llm-1",
-      "name": "LLM",
+      "name": "LLM (Ollama)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4,
-      "position": [3060, 300],
-      "notes": "Calls the LLM (Ollama / OpenAI-compatible endpoint) with the assembled prompt."
+      "position": [2400, 300],
+      "notes": "Calls Ollama at /api/chat with the assembled prompt. Set LLM_URL env var to override."
     },
     {
       "parameters": {
-        "jsCode": "// Normalize Output\n// Extracts the letter text from the LLM response and normalizes it.\n\nconst raw = $input.item.json || {};\nconst prompt = $node['Build Letter Prompt'].json || {};\n\n// Common LLM response shapes\nlet letter_text = '';\n\nif (typeof raw === 'string') {\n  letter_text = raw;\n} else if (raw.message?.content) {\n  letter_text = raw.message.content;\n} else if (raw.choices?.[0]?.message?.content) {\n  letter_text = raw.choices[0].message.content;\n} else if (raw.response) {\n  letter_text = raw.response;\n} else if (raw.text) {\n  letter_text = raw.text;\n} else if (raw.output) {\n  letter_text = raw.output;\n}\n\nletter_text = String(letter_text || '').trim();\n\n// Strip markdown fences if the LLM wrapped them\nletter_text = letter_text\n  .replace(/^```[\\w]*\\n?/gm, '')\n  .replace(/\\n?```$/gm, '')\n  .trim();\n\nreturn [{\n  json: {\n    success: !!letter_text,\n    letter_text,\n    request_id: prompt.request_id || null,\n    tenant_id: prompt.tenant_id || null,\n    facility_id: prompt.facility_id || null,\n    patient_id: prompt.patient_id || null,\n    thread_id: prompt.thread_id || null,\n    payer_key: prompt.payer_key || null,\n    service_key: prompt.service_key || null,\n    template_key: prompt.template_key || null,\n    policy_key: prompt.policy_key || null,\n    template_file_id: prompt.template_file_id || null,\n    policy_file_id: prompt.policy_file_id || null,\n    file_ids: prompt.file_ids || [],\n    generation_mode: prompt.generation_mode || 'monolithic',\n    section_count: prompt.section_count || 0,\n  }\n}];\n"
+        "jsCode": "// Normalize Output\n// Extracts the letter text from the LLM response and normalizes it.\n\nconst raw = $input.item.json || {};\nconst prompt = $node['Build Letter Prompt'].json || {};\n\n// Common LLM response shapes\nlet letter_text = '';\n\nif (typeof raw === 'string') {\n  letter_text = raw;\n} else if (raw.message?.content) {\n  // Ollama /api/chat response\n  letter_text = raw.message.content;\n} else if (raw.choices?.[0]?.message?.content) {\n  // OpenAI-compatible response\n  letter_text = raw.choices[0].message.content;\n} else if (raw.response) {\n  // Ollama /api/generate response\n  letter_text = raw.response;\n} else if (raw.text) {\n  letter_text = raw.text;\n} else if (raw.output) {\n  letter_text = raw.output;\n}\n\nletter_text = String(letter_text || '').trim();\n\n// Strip markdown fences if the LLM wrapped them\nletter_text = letter_text\n  .replace(/^```[\\w]*\\n?/gm, '')\n  .replace(/\\n?```$/gm, '')\n  .trim();\n\nreturn [{\n  json: {\n    success: !!letter_text,\n    letter_text,\n    request_id: prompt.request_id || null,\n    tenant_id: prompt.tenant_id || null,\n    facility_id: prompt.facility_id || null,\n    patient_id: prompt.patient_id || null,\n    thread_id: prompt.thread_id || null,\n    payer_key: prompt.payer_key || null,\n    service_key: prompt.service_key || null,\n    template_key: prompt.template_key || null,\n    policy_key: prompt.policy_key || null,\n    template_file_id: prompt.template_file_id || null,\n    policy_file_id: prompt.policy_file_id || null,\n    file_ids: prompt.file_ids || [],\n    generation_mode: prompt.generation_mode || 'monolithic',\n    section_count: prompt.section_count || 0,\n  }\n}];\n"
       },
       "id": "normalize-output-1",
       "name": "Normalize Output",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [3280, 300]
+      "position": [2620, 300]
     },
     {
       "parameters": {
@@ -246,7 +183,7 @@
       "name": "Respond to Webhook",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1,
-      "position": [3500, 300]
+      "position": [2840, 300]
     }
   ],
   "connections": {
@@ -287,63 +224,14 @@
       "main": [
         [
           {
-            "node": "Build RAG Query",
+            "node": "RAG Lookup (Pinecone)",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Build RAG Query": {
-      "main": [
-        [
-          {
-            "node": "RAG: Load Template",
-            "type": "main",
-            "index": 0
-          },
-          {
-            "node": "RAG: Load Policy",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "RAG: Load Template": {
-      "main": [
-        [
-          {
-            "node": "Merge",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "RAG: Load Policy": {
-      "main": [
-        [
-          {
-            "node": "Merge",
-            "type": "main",
-            "index": 1
-          }
-        ]
-      ]
-    },
-    "Merge": {
-      "main": [
-        [
-          {
-            "node": "Normalize + format response",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Normalize + format response": {
+    "RAG Lookup (Pinecone)": {
       "main": [
         [
           {
@@ -374,7 +262,7 @@
       "main": [
         [
           {
-            "node": "Merge (RAG + Policy)",
+            "node": "Merge DB Results",
             "type": "main",
             "index": 0
           }
@@ -385,14 +273,14 @@
       "main": [
         [
           {
-            "node": "Merge (RAG + Policy)",
+            "node": "Merge DB Results",
             "type": "main",
             "index": 1
           }
         ]
       ]
     },
-    "Merge (RAG + Policy)": {
+    "Merge DB Results": {
       "main": [
         [
           {
@@ -418,14 +306,14 @@
       "main": [
         [
           {
-            "node": "LLM",
+            "node": "LLM (Ollama)",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "LLM": {
+    "LLM (Ollama)": {
       "main": [
         [
           {
@@ -467,6 +355,14 @@
     {
       "name": "preauth",
       "id": "3"
+    },
+    {
+      "name": "pinecone",
+      "id": "4"
+    },
+    {
+      "name": "ollama",
+      "id": "5"
     }
   ]
 }
