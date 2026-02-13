@@ -316,6 +316,25 @@ VALUES
    '2024-01-01')
 ON CONFLICT DO NOTHING;
 
+-- C4b. Seed epidural steroid injection policy (BCBS) — covers CPT 62323
+INSERT INTO demo.payer_policies
+  (tenant_id, facility_id, policy_id, payer_id, policy_name, service_category,
+   cpt_codes, clinical_criteria, required_documents,
+   required_failed_therapies, min_therapy_weeks, guideline_source,
+   appeal_deadline_days, effective_date)
+VALUES
+  (1, 'FAC-DEMO', 'POL-BCBS-ESI-001', 'BCBS',
+   'Epidural Steroid Injection — BCBS TX',
+   'pain_management',
+   ARRAY['62321','62322','62323','62324','62325','62326','62327'],
+   'Epidural steroid injection is considered medically necessary when: (1) Diagnosis of radiculopathy or spinal stenosis confirmed by clinical exam and imaging; (2) Patient has failed at least 4-6 weeks of conservative treatment (PT, oral medications); (3) Maximum of 3 injections per region per 12-month period; (4) Subsequent injections require documented positive response (>50% pain relief for >2 weeks) from prior injection; (5) Fluoroscopic guidance required.',
+   'MRI or CT showing correlating pathology, Physical therapy records, Medication trial documentation, Prior injection records if applicable, Pain scale documentation',
+   2, 4,
+   'MCG',
+   60,
+   '2024-01-01')
+ON CONFLICT DO NOTHING;
+
 -- C5. Seed letter template
 INSERT INTO demo.letter_templates
   (tenant_id, facility_id, template_id, template_name, letter_type, service_category,
@@ -335,6 +354,11 @@ VALUES
    1, true)
 ON CONFLICT DO NOTHING;
 
+-- C5b. Backfill template_body for seed templates (INSERT above omits it)
+UPDATE demo.letter_templates
+  SET template_body = E'{{letter_date}}\n\n{{payer_name}}\nAttn: Prior Authorization Department\n{{payer_address}}\n\n{{payer_fax_line}}\n\nRe: Prior Authorization Request \u2014 Medical Necessity\nPatient: {{patient_name}}\nDate of Birth: {{patient_dob}}\nMember ID: {{member_id}}\nGroup ID: {{group_id}}\nPlan: {{plan_name}}\nRequesting Provider: {{provider_name}}, {{provider_credentials}}\nNPI: {{provider_npi}}\nFacility: {{facility_name}} | NPI: {{facility_npi}}\n\nDear Prior Authorization Review Team,\n\nI am writing to request prior authorization for {{service_name}} (CPT: {{cpt_code}} \u2014 {{cpt_description}}) for the above-referenced patient. The requested date of service is {{requested_dos}}.\n\nCLINICAL SUMMARY:\n\n{{patient_name}} is a {{patient_age}}-year-old {{patient_sex}} who presents with the following diagnoses:\n\n{{diagnoses_list}}\n\nHISTORY OF PRESENT ILLNESS:\n\n{{encounter_summary}}\n\nCONSERVATIVE TREATMENTS ATTEMPTED:\n\nThe patient has undergone the following conservative treatments prior to this request:\n\n{{failed_therapies}}\n\nMEDICATIONS TRIALED:\n\n{{medication_trials}}\n\nDIAGNOSTIC IMAGING:\n\n{{imaging_findings}}\n\nMEDICAL NECESSITY JUSTIFICATION:\n\n{{medical_necessity_summary}}\n\nBased on the clinical evidence above, {{service_name}} is medically necessary for this patient. The patient has failed appropriate conservative management, and the requested procedure/service is the next clinically appropriate step in their care. Delaying or denying this service would likely result in worsening of the patient\u2019s condition, increased pain, and functional decline.\n\n{{clinical_criteria_reference}}\n\nI respectfully request approval of this authorization. Please do not hesitate to contact our office at {{facility_phone}} if additional information is needed. I am available for a peer-to-peer review at your convenience.\n\nSincerely,\n\n{{signature_line}}\n{{provider_name}}, {{provider_credentials}}\n{{provider_specialty}}\nNPI: {{provider_npi}}\n{{facility_name}}\n{{facility_phone}} | Fax: {{facility_fax}}'
+  WHERE template_id = 'TMPL-IA-SPINE-001' AND template_body IS NULL;
+
 
 -- ============================================================================
 -- Done. Summary:
@@ -350,4 +374,5 @@ ON CONFLICT DO NOTHING;
 --
 -- Seed data:
 --   1 facility, 1 provider, 5 payers, 1 policy, 2 letter templates
+--   (template_body backfilled for TMPL-IA-SPINE-001)
 -- ============================================================================

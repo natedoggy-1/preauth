@@ -1234,6 +1234,28 @@ app.post("/api/letters/generate-sections", requireToken, async (req, res) => {
       sections = secRes.rows;
     }
 
+    // Fallback: if no sections found for this template, try any active template
+    // with the same letter_type (e.g. user created a new template but sections
+    // are only seeded for the original template_id).
+    if (sections.length === 0) {
+      const resolvedLetterType = tmpl?.letter_type || letter_type;
+      const fallbackRes = await pool.query(
+        `SELECT ts.* FROM ${S}.template_sections ts
+         JOIN ${S}.letter_templates lt
+           ON lt.tenant_id = ts.tenant_id AND lt.facility_id = ts.facility_id
+              AND lt.template_id = ts.template_id
+         WHERE ts.tenant_id=$1 AND ts.facility_id=$2
+           AND lt.letter_type=$3 AND lt.is_active=true AND ts.is_active=true
+         ORDER BY ts.section_order ASC
+         LIMIT 20;`,
+        [tenant_id, facility_id, resolvedLetterType]
+      );
+      sections = fallbackRes.rows;
+      if (sections.length > 0) {
+        console.log(`generate-sections: no sections for template ${resolvedTemplateId}, fell back to letter_type=${resolvedLetterType} (${sections.length} sections)`);
+      }
+    }
+
     // 2. Get normalized patient data
     const patientRes = await pool.query(
       `SELECT *, (first_name || ' ' || last_name) AS full_name,
