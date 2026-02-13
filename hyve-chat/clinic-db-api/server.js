@@ -857,26 +857,831 @@ app.get("/api/letters/:id", requireToken, async (req, res) => {
 });
 
 // ============================================================================
+// NEW v3: Template Sections (Blueprint §4.1)
+// ============================================================================
+// Sections allow per-section generation: each section has its own instruction
+// prompt and scaffold text. The generation loop iterates through sections in
+// order and generates each one independently.
+// ============================================================================
+
+app.get("/api/letter-templates/:id/sections", requireToken, async (req, res) => {
+  const { tenant_id, facility_id } = tf(req);
+  const template_id = req.params.id;
+  try {
+    const r = await pool.query(
+      `SELECT section_id, section_name, section_order, instruction_prompt,
+              scaffold_text, requires_policy, requires_clinical, is_active
+       FROM ${S}.template_sections
+       WHERE tenant_id=$1 AND facility_id=$2 AND template_id=$3 AND is_active=true
+       ORDER BY section_order ASC;`,
+      [tenant_id, facility_id, template_id]
+    );
+    res.json({ ok: true, template_id, sections: r.rows });
+  } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
+});
+
+app.post("/api/letter-templates/:id/sections", requireToken, async (req, res) => {
+  const { tenant_id, facility_id } = tf(req);
+  const template_id = req.params.id;
+  const sections = Array.isArray(req.body?.sections) ? req.body.sections : [];
+  if (!sections.length) return res.status(400).json({ ok: false, error: "sections array required" });
+
+  try {
+    const inserted = [];
+    for (const sec of sections) {
+      const section_id = sec.section_id || `SEC-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+      await pool.query(
+        `INSERT INTO ${S}.template_sections
+         (tenant_id, facility_id, section_id, template_id, section_name, section_order,
+          instruction_prompt, scaffold_text, requires_policy, requires_clinical)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+         ON CONFLICT (tenant_id, facility_id, section_id) DO UPDATE SET
+           section_name=EXCLUDED.section_name, section_order=EXCLUDED.section_order,
+           instruction_prompt=EXCLUDED.instruction_prompt, scaffold_text=EXCLUDED.scaffold_text,
+           requires_policy=EXCLUDED.requires_policy, requires_clinical=EXCLUDED.requires_clinical,
+           updated_at=now();`,
+        [
+          tenant_id, facility_id, section_id, template_id,
+          sec.section_name || "Untitled",
+          sec.section_order ?? inserted.length,
+          sec.instruction_prompt || "",
+          sec.scaffold_text || "",
+          sec.requires_policy ?? false,
+          sec.requires_clinical ?? true,
+        ]
+      );
+      inserted.push(section_id);
+    }
+    res.json({ ok: true, template_id, inserted_section_ids: inserted });
+  } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
+});
+
+// ============================================================================
+// NEW v3: Patient Data Normalization (Blueprint §5, Step 1)
+// ============================================================================
+// Creates a structured normalized object from raw patient background data.
+// Prevents prompt noise by extracting only the relevant clinical facts.
+// ============================================================================
+
+app.post("/api/patients/normalize", requireToken, async (req, res) => {
+  const { tenant_id, facility_id } = tf(req);
+  const patient_id = String(req.body?.patient_id ?? "").trim();
+  if (!patient_id) return res.status(400).json({ ok: false, error: "patient_id required" });
+
+  try {
+    // Fetch all clinical data in parallel
+    const [patientRes, problemsRes, therapyRes, imagingRes, encountersRes, medTrialsRes] = await Promise.all([
+      pool.query(
+        `SELECT patient_id, first_name, last_name, (first_name || ' ' || last_name) AS full_name,
+                to_char(dob,'YYYY-MM-DD') AS dob, EXTRACT(YEAR FROM AGE(dob))::int AS age, sex
+         FROM ${S}.patients WHERE tenant_id=$1 AND facility_id=$2 AND patient_id=$3 LIMIT 1;`,
+        [tenant_id, facility_id, patient_id]
+      ),
+      pool.query(
+        `SELECT icd10_code, description, to_char(onset_date,'YYYY-MM-DD') AS onset_date
+         FROM ${S}.problems WHERE tenant_id=$1 AND facility_id=$2 AND patient_id=$3 ORDER BY onset_date ASC NULLS LAST;`,
+        [tenant_id, facility_id, patient_id]
+      ),
+      pool.query(
+        `SELECT therapy_type, to_char(start_date,'YYYY-MM-DD') AS start_date,
+                to_char(end_date,'YYYY-MM-DD') AS end_date, total_visits, response, therapy_item
+         FROM ${S}.therapy WHERE tenant_id=$1 AND facility_id=$2 AND patient_id=$3 ORDER BY start_date ASC NULLS LAST;`,
+        [tenant_id, facility_id, patient_id]
+      ),
+      pool.query(
+        `SELECT modality, body_part, impression, item, to_char(imaging_date,'YYYY-MM-DD') AS imaging_date
+         FROM ${S}.imaging WHERE tenant_id=$1 AND facility_id=$2 AND patient_id=$3 ORDER BY imaging_date DESC NULLS LAST;`,
+        [tenant_id, facility_id, patient_id]
+      ),
+      pool.query(
+        `SELECT to_char(encounter_date,'YYYY-MM-DD') AS encounter_date, summary, provider_name
+         FROM ${S}.encounters WHERE tenant_id=$1 AND facility_id=$2 AND patient_id=$3
+         ORDER BY encounter_date DESC NULLS LAST LIMIT 15;`,
+        [tenant_id, facility_id, patient_id]
+      ),
+      pool.query(
+        `SELECT medication, dose, to_char(start_date,'YYYY-MM-DD') AS start_date,
+                to_char(end_date,'YYYY-MM-DD') AS end_date, outcome
+         FROM ${S}.med_trials WHERE tenant_id=$1 AND facility_id=$2 AND patient_id=$3 ORDER BY start_date ASC NULLS LAST;`,
+        [tenant_id, facility_id, patient_id]
+      ),
+    ]);
+
+    const patient = patientRes.rows[0];
+    if (!patient) return res.status(404).json({ ok: false, error: "Patient not found" });
+
+    // Build the normalized structured object (Blueprint §5 Step 1)
+    const problems = problemsRes.rows || [];
+    const therapies = therapyRes.rows || [];
+    const imagingRows = imagingRes.rows || [];
+    const encounters = encountersRes.rows || [];
+    const medTrials = medTrialsRes.rows || [];
+
+    // Derive primary diagnosis
+    const primaryDx = problems[0] || null;
+
+    // Compute symptom duration from earliest problem onset
+    let symptom_duration = null;
+    const onsetDates = problems.map(p => p.onset_date).filter(Boolean).sort();
+    if (onsetDates.length) {
+      const earliest = new Date(onsetDates[0]);
+      const now = new Date();
+      const months = Math.round((now - earliest) / (1000 * 60 * 60 * 24 * 30.44));
+      symptom_duration = months > 12
+        ? `${Math.round(months / 12)} years`
+        : `${months} months`;
+    }
+
+    // Extract failed treatments
+    const failed_treatments = therapies
+      .filter(t => t.response && /fail|inad|poor|no.?relief|no.?improv|minimal/i.test(t.response))
+      .map(t => ({
+        type: t.therapy_type,
+        visits: t.total_visits,
+        response: t.response,
+        item: t.therapy_item || null,
+      }));
+
+    // Extract medications with outcomes
+    const medications = medTrials.map(m => ({
+      name: m.medication,
+      dose: m.dose,
+      outcome: m.outcome,
+      start_date: m.start_date,
+      end_date: m.end_date,
+    }));
+
+    // Extract functional limits from encounter summaries
+    const functional_limits = encounters
+      .map(e => e.summary || "")
+      .filter(s => /function|limit|unable|restrict|impair|disab|pain.*daily|ADL/i.test(s))
+      .slice(0, 5);
+
+    // Imaging findings
+    const imaging_findings = imagingRows.map(i => ({
+      modality: i.modality,
+      body_part: i.body_part,
+      impression: i.impression,
+      date: i.imaging_date,
+    }));
+
+    const normalized = {
+      patient_id: patient.patient_id,
+      age: patient.age,
+      sex: patient.sex,
+      diagnosis: problems.map(p => ({
+        icd10: p.icd10_code,
+        description: p.description,
+        onset: p.onset_date,
+      })),
+      primary_diagnosis: primaryDx ? {
+        icd10: primaryDx.icd10_code,
+        description: primaryDx.description,
+      } : null,
+      symptoms: encounters
+        .map(e => e.summary)
+        .filter(Boolean)
+        .slice(0, 8),
+      symptom_duration,
+      failed_treatments,
+      medications,
+      functional_limits,
+      imaging_findings,
+      therapy_history: therapies.map(t => ({
+        type: t.therapy_type,
+        start_date: t.start_date,
+        end_date: t.end_date,
+        visits: t.total_visits,
+        response: t.response,
+        item: t.therapy_item,
+      })),
+    };
+
+    res.json({ ok: true, patient_id, normalized });
+  } catch (e) {
+    console.error("normalize error:", e);
+    res.status(500).json({ ok: false, error: String(e) });
+  }
+});
+
+// ============================================================================
+// NEW v3: Policy Criteria Extraction (Blueprint §5, Step 2)
+// ============================================================================
+// Returns structured criteria from the payer policy for a given service.
+// The client/LLM uses this to align evidence against each criterion.
+// ============================================================================
+
+app.post("/api/policy/extract-criteria", requireToken, async (req, res) => {
+  const { tenant_id, facility_id } = tf(req);
+  const policy_id = String(req.body?.policy_id ?? "").trim();
+  const payer_id = String(req.body?.payer_id ?? "").trim();
+  const cpt_code = String(req.body?.cpt_code ?? "").trim();
+
+  try {
+    let policy = null;
+
+    // If policy_id provided, fetch directly
+    if (policy_id) {
+      const r = await pool.query(
+        `SELECT * FROM ${S}.payer_policies WHERE tenant_id=$1 AND facility_id=$2 AND policy_id=$3 LIMIT 1;`,
+        [tenant_id, facility_id, policy_id]
+      );
+      policy = r.rows[0] || null;
+    }
+    // Otherwise match by payer + CPT
+    else if (payer_id && cpt_code) {
+      const r = await pool.query(
+        `SELECT * FROM ${S}.payer_policies
+         WHERE tenant_id=$1 AND facility_id=$2 AND payer_id=$3
+           AND $4 = ANY(cpt_codes)
+           AND (expiration_date IS NULL OR expiration_date >= CURRENT_DATE)
+         ORDER BY effective_date DESC NULLS LAST LIMIT 1;`,
+        [tenant_id, facility_id, payer_id, cpt_code]
+      );
+      policy = r.rows[0] || null;
+    }
+
+    if (!policy) return res.status(404).json({ ok: false, error: "No matching policy found" });
+
+    // Extract structured criteria from the policy
+    const criteria = {
+      policy_id: policy.policy_id,
+      policy_name: policy.policy_name,
+      payer_id: policy.payer_id,
+
+      // Core requirements
+      clinical_criteria: policy.clinical_criteria || null,
+      required_documents: policy.required_documents || null,
+      required_failed_therapies: policy.required_failed_therapies || 0,
+      min_therapy_weeks: policy.min_therapy_weeks || 0,
+
+      // Guideline reference
+      guideline_source: policy.guideline_source || null,
+
+      // Appeal info
+      appeal_deadline_days: policy.appeal_deadline_days || null,
+
+      // Structured checklist for the LLM
+      checklist: [],
+    };
+
+    // Build a checklist from clinical_criteria text
+    if (policy.clinical_criteria) {
+      const criteriaText = String(policy.clinical_criteria);
+      // Split on common delimiters (numbered items, bullets, semicolons)
+      const items = criteriaText
+        .split(/(?:\d+[.)]\s*|\n[-•*]\s*|\n\d+\.\s*|;\s*)/)
+        .map(s => s.trim())
+        .filter(s => s.length > 5);
+
+      criteria.checklist = items.map((item, idx) => ({
+        criterion_id: `C${idx + 1}`,
+        text: item,
+        category: categorizeCI(item),
+      }));
+    }
+
+    // Add required failed therapies as explicit criterion
+    if (policy.required_failed_therapies > 0) {
+      criteria.checklist.push({
+        criterion_id: `C_FT`,
+        text: `Patient must have failed at least ${policy.required_failed_therapies} conservative treatment(s)`,
+        category: "conservative_treatment",
+      });
+    }
+
+    // Add minimum therapy weeks as explicit criterion
+    if (policy.min_therapy_weeks > 0) {
+      criteria.checklist.push({
+        criterion_id: `C_TW`,
+        text: `Patient must have completed at least ${policy.min_therapy_weeks} weeks of conservative therapy`,
+        category: "conservative_treatment",
+      });
+    }
+
+    res.json({ ok: true, criteria });
+  } catch (e) {
+    console.error("extract-criteria error:", e);
+    res.status(500).json({ ok: false, error: String(e) });
+  }
+});
+
+// Helper: categorize a criterion item
+function categorizeCI(text) {
+  const t = text.toLowerCase();
+  if (/conserv|therap|physical|pt |rehab|inject/i.test(t)) return "conservative_treatment";
+  if (/imag|mri|ct |x-ray|radiograph/i.test(t)) return "imaging";
+  if (/diagnos|icd|condition/i.test(t)) return "diagnosis";
+  if (/function|limit|impair|disab/i.test(t)) return "functional_limitation";
+  if (/document|record|note|report/i.test(t)) return "documentation";
+  if (/medic|drug|pharma|nsaid|opioid/i.test(t)) return "medication";
+  return "general";
+}
+
+// ============================================================================
+// NEW v3: Section Generation Pipeline (Blueprint §5, Steps 3-4)
+// ============================================================================
+// Prepares the full section-based generation payload. The actual LLM call
+// happens client-side via n8n webhook. This endpoint assembles all data
+// each section needs.
+// ============================================================================
+
+app.post("/api/letters/generate-sections", requireToken, async (req, res) => {
+  const { tenant_id, facility_id } = tf(req);
+  const patient_id = String(req.body?.patient_id ?? "").trim();
+  const template_id = String(req.body?.template_id ?? "").trim();
+  const letter_type = String(req.body?.letter_type ?? "initial_auth").trim();
+  const request_id = String(req.body?.request_id ?? "").trim();
+  const provider_id = String(req.body?.provider_id ?? "").trim();
+  const coverage_id = String(req.body?.coverage_id ?? "").trim();
+
+  if (!patient_id) return res.status(400).json({ ok: false, error: "patient_id required" });
+
+  try {
+    // 1. Get template and its sections
+    let tmpl = null;
+    let sections = [];
+
+    if (template_id) {
+      const tmplRes = await pool.query(
+        `SELECT * FROM ${S}.letter_templates WHERE tenant_id=$1 AND facility_id=$2 AND template_id=$3 LIMIT 1;`,
+        [tenant_id, facility_id, template_id]
+      );
+      tmpl = tmplRes.rows[0] || null;
+    } else {
+      // Auto-select template by letter_type
+      const tmplRes = await pool.query(
+        `SELECT * FROM ${S}.letter_templates
+         WHERE tenant_id=$1 AND facility_id=$2 AND letter_type=$3 AND is_active=true
+         ORDER BY version DESC LIMIT 1;`,
+        [tenant_id, facility_id, letter_type]
+      );
+      tmpl = tmplRes.rows[0] || null;
+    }
+
+    const resolvedTemplateId = tmpl?.template_id;
+    if (resolvedTemplateId) {
+      const secRes = await pool.query(
+        `SELECT * FROM ${S}.template_sections
+         WHERE tenant_id=$1 AND facility_id=$2 AND template_id=$3 AND is_active=true
+         ORDER BY section_order ASC;`,
+        [tenant_id, facility_id, resolvedTemplateId]
+      );
+      sections = secRes.rows;
+    }
+
+    // 2. Get normalized patient data
+    const patientRes = await pool.query(
+      `SELECT *, (first_name || ' ' || last_name) AS full_name,
+              to_char(dob,'YYYY-MM-DD') AS dob_str, EXTRACT(YEAR FROM AGE(dob))::int AS age
+       FROM ${S}.patients WHERE tenant_id=$1 AND facility_id=$2 AND patient_id=$3 LIMIT 1;`,
+      [tenant_id, facility_id, patient_id]
+    );
+    if (!patientRes.rows[0]) return res.status(404).json({ ok: false, error: "Patient not found" });
+
+    // 3. Get clinical data
+    const [problemsRes, therapyRes, imagingRes, encountersRes, medTrialsRes] = await Promise.all([
+      pool.query(`SELECT * FROM ${S}.problems WHERE tenant_id=$1 AND facility_id=$2 AND patient_id=$3 ORDER BY problem_id;`, [tenant_id, facility_id, patient_id]),
+      pool.query(`SELECT * FROM ${S}.therapy WHERE tenant_id=$1 AND facility_id=$2 AND patient_id=$3 ORDER BY start_date ASC NULLS LAST;`, [tenant_id, facility_id, patient_id]),
+      pool.query(`SELECT * FROM ${S}.imaging WHERE tenant_id=$1 AND facility_id=$2 AND patient_id=$3 ORDER BY imaging_date DESC NULLS LAST;`, [tenant_id, facility_id, patient_id]),
+      pool.query(`SELECT * FROM ${S}.encounters WHERE tenant_id=$1 AND facility_id=$2 AND patient_id=$3 ORDER BY encounter_date DESC NULLS LAST LIMIT 15;`, [tenant_id, facility_id, patient_id]),
+      pool.query(`SELECT * FROM ${S}.med_trials WHERE tenant_id=$1 AND facility_id=$2 AND patient_id=$3 ORDER BY start_date ASC NULLS LAST;`, [tenant_id, facility_id, patient_id]),
+    ]);
+
+    // 4. Get coverage + policy
+    let coverage = null;
+    let payer_policy = null;
+    let request = null;
+
+    if (coverage_id) {
+      const covRes = await pool.query(
+        `SELECT c.*, py.payer_name AS payer_full_name, py.phone_pa, py.fax_pa, py.portal_url,
+                py.address_line1 AS payer_address, py.city AS payer_city, py.state AS payer_state, py.zip AS payer_zip
+         FROM ${S}.coverage c
+         LEFT JOIN ${S}.payers py ON py.tenant_id=c.tenant_id AND py.facility_id=c.facility_id AND py.payer_id=c.payer_id
+         WHERE c.tenant_id=$1 AND c.facility_id=$2 AND c.coverage_id=$3 LIMIT 1;`,
+        [tenant_id, facility_id, coverage_id]
+      );
+      coverage = covRes.rows[0] || null;
+    }
+
+    if (request_id) {
+      const reqRes = await pool.query(
+        `SELECT * FROM ${S}.preauth_requests WHERE tenant_id=$1 AND facility_id=$2 AND request_id=$3 LIMIT 1;`,
+        [tenant_id, facility_id, request_id]
+      );
+      request = reqRes.rows[0] || null;
+    }
+
+    const payer_id = coverage?.payer_id || request?.payer_id;
+    if (payer_id && request?.cpt_code) {
+      const polRes = await pool.query(
+        `SELECT * FROM ${S}.payer_policies
+         WHERE tenant_id=$1 AND facility_id=$2 AND payer_id=$3 AND $4 = ANY(cpt_codes)
+           AND (expiration_date IS NULL OR expiration_date >= CURRENT_DATE)
+         ORDER BY effective_date DESC NULLS LAST LIMIT 1;`,
+        [tenant_id, facility_id, payer_id, request.cpt_code]
+      );
+      payer_policy = polRes.rows[0] || null;
+    }
+
+    // 5. Get provider + facility
+    let provider = null;
+    const prov_id = provider_id || request?.provider_id;
+    if (prov_id) {
+      const provRes = await pool.query(
+        `SELECT * FROM ${S}.providers WHERE tenant_id=$1 AND facility_id=$2 AND provider_id=$3 LIMIT 1;`,
+        [tenant_id, facility_id, prov_id]
+      );
+      provider = provRes.rows[0] || null;
+    }
+
+    const facRes = await pool.query(
+      `SELECT * FROM ${S}.facilities WHERE tenant_id=$1 AND facility_id=$2 LIMIT 1;`,
+      [tenant_id, facility_id]
+    );
+    const facility = facRes.rows[0] || null;
+
+    // 6. Build per-section generation payloads
+    const clinical = {
+      problems: problemsRes.rows,
+      therapies: therapyRes.rows,
+      imaging: imagingRes.rows,
+      encounters: encountersRes.rows,
+      med_trials: medTrialsRes.rows,
+    };
+
+    const policy_criteria = payer_policy ? {
+      clinical_criteria: payer_policy.clinical_criteria,
+      required_documents: payer_policy.required_documents,
+      required_failed_therapies: payer_policy.required_failed_therapies,
+      min_therapy_weeks: payer_policy.min_therapy_weeks,
+      guideline_source: payer_policy.guideline_source,
+    } : null;
+
+    const section_payloads = sections.map((sec) => ({
+      section_id: sec.section_id,
+      section_name: sec.section_name,
+      section_order: sec.section_order,
+      instruction_prompt: sec.instruction_prompt,
+      scaffold_text: sec.scaffold_text,
+      // Only include what the section needs
+      patient_facts: sec.requires_clinical ? clinical : null,
+      policy_criteria: sec.requires_policy ? policy_criteria : null,
+    }));
+
+    res.json({
+      ok: true,
+      letter_type,
+      template: tmpl ? {
+        template_id: tmpl.template_id,
+        template_name: tmpl.template_name,
+        instructions: tmpl.instructions,
+      } : null,
+      patient: {
+        patient_id: patientRes.rows[0].patient_id,
+        full_name: patientRes.rows[0].full_name,
+        age: patientRes.rows[0].age,
+        sex: patientRes.rows[0].sex,
+      },
+      coverage: coverage ? {
+        coverage_id: coverage.coverage_id,
+        payer_name: coverage.payer_full_name || coverage.payer_name,
+        payer_id: coverage.payer_id,
+        member_id: coverage.member_id,
+        plan_name: coverage.plan_name,
+      } : null,
+      request: request ? {
+        request_id: request.request_id,
+        cpt_code: request.cpt_code,
+        icd10_code: request.icd10_code,
+        service_name: request.service_name,
+      } : null,
+      provider: provider ? {
+        provider_id: provider.provider_id,
+        name: `${provider.first_name} ${provider.last_name}`,
+        credentials: provider.credentials,
+        specialty: provider.specialty,
+        npi: provider.npi,
+      } : null,
+      facility: facility ? {
+        name: facility.facility_name,
+        npi: facility.npi,
+        phone: facility.phone,
+        fax: facility.fax,
+        address: [facility.address_line1, facility.city, facility.state, facility.zip].filter(Boolean).join(", "),
+      } : null,
+      policy_criteria,
+      clinical,
+      sections: section_payloads,
+      section_count: section_payloads.length,
+    });
+  } catch (e) {
+    console.error("generate-sections error:", e);
+    res.status(500).json({ ok: false, error: String(e) });
+  }
+});
+
+// ============================================================================
+// NEW v3: Validation Pass (Blueprint §6)
+// ============================================================================
+// Evaluates generated letter sections against policy criteria.
+// Returns coverage gaps, missing evidence, and weak reasoning flags.
+// ============================================================================
+
+app.post("/api/letters/validate", requireToken, async (req, res) => {
+  const { tenant_id, facility_id } = tf(req);
+  const letter_body = String(req.body?.letter_body ?? "").trim();
+  const sections = Array.isArray(req.body?.sections) ? req.body.sections : [];
+  const policy_id = String(req.body?.policy_id ?? "").trim();
+  const payer_id = String(req.body?.payer_id ?? "").trim();
+  const cpt_code = String(req.body?.cpt_code ?? "").trim();
+
+  if (!letter_body && !sections.length) {
+    return res.status(400).json({ ok: false, error: "letter_body or sections required" });
+  }
+
+  try {
+    // Fetch policy for criteria matching
+    let policy = null;
+    if (policy_id) {
+      const r = await pool.query(
+        `SELECT * FROM ${S}.payer_policies WHERE tenant_id=$1 AND facility_id=$2 AND policy_id=$3 LIMIT 1;`,
+        [tenant_id, facility_id, policy_id]
+      );
+      policy = r.rows[0] || null;
+    } else if (payer_id && cpt_code) {
+      const r = await pool.query(
+        `SELECT * FROM ${S}.payer_policies
+         WHERE tenant_id=$1 AND facility_id=$2 AND payer_id=$3 AND $4 = ANY(cpt_codes)
+           AND (expiration_date IS NULL OR expiration_date >= CURRENT_DATE)
+         ORDER BY effective_date DESC NULLS LAST LIMIT 1;`,
+        [tenant_id, facility_id, payer_id, cpt_code]
+      );
+      policy = r.rows[0] || null;
+    }
+
+    const fullText = letter_body || sections.map(s => s.content || s.text || "").join("\n\n");
+    const textLower = fullText.toLowerCase();
+
+    const issues = [];
+    let criteria_met = 0;
+    let criteria_total = 0;
+
+    // Check criteria coverage
+    if (policy) {
+      // Check required failed therapies
+      if (policy.required_failed_therapies > 0) {
+        criteria_total++;
+        const failWords = ["failed", "inadequate", "no relief", "no improvement", "did not respond", "unsuccessful"];
+        const hasFailureEvidence = failWords.some(w => textLower.includes(w));
+        if (hasFailureEvidence) {
+          criteria_met++;
+        } else {
+          issues.push({
+            type: "missing_evidence",
+            severity: "high",
+            section: "conservative_treatment",
+            message: `Policy requires ${policy.required_failed_therapies} failed conservative treatment(s) but no failure evidence found in letter.`,
+          });
+        }
+      }
+
+      // Check minimum therapy weeks
+      if (policy.min_therapy_weeks > 0) {
+        criteria_total++;
+        const hasWeeks = /\d+\s*weeks?\s*(of\s*)?(therapy|treatment|pt|physical)/i.test(fullText);
+        if (hasWeeks) {
+          criteria_met++;
+        } else {
+          issues.push({
+            type: "missing_evidence",
+            severity: "high",
+            section: "conservative_treatment",
+            message: `Policy requires minimum ${policy.min_therapy_weeks} weeks of therapy but no therapy duration found in letter.`,
+          });
+        }
+      }
+
+      // Check clinical criteria mentions
+      if (policy.clinical_criteria) {
+        const criteriaItems = String(policy.clinical_criteria)
+          .split(/(?:\d+[.)]\s*|\n[-•*]\s*|;\s*)/)
+          .map(s => s.trim())
+          .filter(s => s.length > 10);
+
+        criteriaItems.forEach((criterion, idx) => {
+          criteria_total++;
+          // Check if key words from the criterion appear in the letter
+          const keyWords = criterion.toLowerCase()
+            .replace(/[^\w\s]/g, "")
+            .split(/\s+/)
+            .filter(w => w.length > 4);
+
+          const matchCount = keyWords.filter(w => textLower.includes(w)).length;
+          const matchRatio = keyWords.length > 0 ? matchCount / keyWords.length : 0;
+
+          if (matchRatio >= 0.4) {
+            criteria_met++;
+          } else {
+            issues.push({
+              type: "criteria_gap",
+              severity: matchRatio > 0.2 ? "medium" : "high",
+              criterion_index: idx + 1,
+              criterion_text: criterion.slice(0, 200),
+              message: `Policy criterion may not be adequately addressed: "${criterion.slice(0, 100)}..."`,
+            });
+          }
+        });
+      }
+
+      // Check required documents
+      if (policy.required_documents) {
+        const docs = String(policy.required_documents)
+          .split(/[,;\n]/)
+          .map(s => s.trim())
+          .filter(Boolean);
+        docs.forEach(doc => {
+          criteria_total++;
+          if (textLower.includes(doc.toLowerCase().slice(0, 20))) {
+            criteria_met++;
+          } else {
+            issues.push({
+              type: "missing_document",
+              severity: "medium",
+              message: `Required document not referenced: "${doc}"`,
+            });
+          }
+        });
+      }
+    }
+
+    // General quality checks (no policy needed)
+    // Check for diagnosis codes
+    if (!/[A-Z]\d{2,3}(\.\d+)?/i.test(fullText)) {
+      issues.push({
+        type: "weak_reasoning",
+        severity: "medium",
+        section: "clinical_history",
+        message: "No ICD-10 diagnosis codes found in letter. Include specific diagnosis codes.",
+      });
+    }
+
+    // Check for CPT codes
+    if (!/\b\d{5}\b/.test(fullText) && !/CPT/i.test(fullText)) {
+      issues.push({
+        type: "weak_reasoning",
+        severity: "low",
+        section: "header",
+        message: "No CPT procedure code found in letter.",
+      });
+    }
+
+    // Check for medical necessity language
+    const necessityPhrases = ["medically necessary", "medical necessity", "clinically indicated", "standard of care"];
+    const hasNecessity = necessityPhrases.some(p => textLower.includes(p));
+    if (!hasNecessity) {
+      issues.push({
+        type: "weak_reasoning",
+        severity: "high",
+        section: "medical_necessity",
+        message: "Letter does not contain explicit medical necessity language.",
+      });
+    }
+
+    // Check letter has reasonable length
+    if (fullText.length < 500) {
+      issues.push({
+        type: "weak_reasoning",
+        severity: "high",
+        message: "Letter appears too short. Prior authorization letters typically need detailed clinical evidence.",
+      });
+    }
+
+    const score = criteria_total > 0 ? Math.round((criteria_met / criteria_total) * 100) : null;
+
+    res.json({
+      ok: true,
+      validation: {
+        passed: issues.filter(i => i.severity === "high").length === 0,
+        score,
+        criteria_met,
+        criteria_total,
+        issue_count: issues.length,
+        high_severity_count: issues.filter(i => i.severity === "high").length,
+        medium_severity_count: issues.filter(i => i.severity === "medium").length,
+        low_severity_count: issues.filter(i => i.severity === "low").length,
+        issues,
+      },
+    });
+  } catch (e) {
+    console.error("validate error:", e);
+    res.status(500).json({ ok: false, error: String(e) });
+  }
+});
+
+// ============================================================================
+// NEW v3: Generation Logging (Blueprint §8)
+// ============================================================================
+
+app.post("/api/generation-logs", requireToken, async (req, res) => {
+  const { tenant_id, facility_id } = tf(req);
+  const b = req.body;
+  const log_id = b.log_id || `LOG-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+
+  try {
+    await pool.query(
+      `INSERT INTO ${S}.generation_logs
+       (tenant_id, facility_id, log_id, letter_id, request_id, patient_id,
+        payer_id, provider_id, template_id, letter_type,
+        cpt_codes, icd10_codes, policy_refs,
+        generation_time_ms, section_count, validation_passed, validation_issues,
+        user_edits, outcome, model_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20);`,
+      [
+        tenant_id, facility_id, log_id,
+        b.letter_id || null, b.request_id || null, b.patient_id || null,
+        b.payer_id || null, b.provider_id || null, b.template_id || null,
+        b.letter_type || null,
+        b.cpt_codes || null, b.icd10_codes || null, b.policy_refs || null,
+        b.generation_time_ms || null, b.section_count || null,
+        b.validation_passed ?? null, b.validation_issues ? JSON.stringify(b.validation_issues) : null,
+        b.user_edits ? JSON.stringify(b.user_edits) : null,
+        b.outcome || null, b.model_id || null,
+      ]
+    );
+    res.json({ ok: true, log_id });
+  } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
+});
+
+app.get("/api/generation-logs", requireToken, async (req, res) => {
+  const { tenant_id, facility_id } = tf(req);
+  const patient_id = String(req.query?.patient_id ?? "").trim();
+  const limit = Math.min(Number(req.query?.limit ?? 50), 200);
+
+  try {
+    let sql = `SELECT * FROM ${S}.generation_logs WHERE tenant_id=$1 AND facility_id=$2`;
+    const params = [tenant_id, facility_id];
+    let idx = 3;
+
+    if (patient_id) { sql += ` AND patient_id=$${idx++}`; params.push(patient_id); }
+    sql += ` ORDER BY created_at DESC LIMIT $${idx}`;
+    params.push(limit);
+
+    const r = await pool.query(sql, params);
+    res.json({ ok: true, logs: r.rows });
+  } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
+});
+
+app.patch("/api/generation-logs/:id/outcome", requireToken, async (req, res) => {
+  const { tenant_id, facility_id } = tf(req);
+  const log_id = req.params.id;
+  const outcome = String(req.body?.outcome ?? "").trim();
+  const user_edits = req.body?.user_edits || null;
+
+  if (!outcome) return res.status(400).json({ ok: false, error: "outcome required" });
+
+  try {
+    await pool.query(
+      `UPDATE ${S}.generation_logs SET outcome=$4, outcome_date=CURRENT_DATE,
+              user_edits=COALESCE($5, user_edits)
+       WHERE tenant_id=$1 AND facility_id=$2 AND log_id=$3;`,
+      [tenant_id, facility_id, log_id, outcome, user_edits ? JSON.stringify(user_edits) : null]
+    );
+    res.json({ ok: true, log_id, outcome });
+  } catch (e) { res.status(500).json({ ok: false, error: String(e) }); }
+});
+
+// ============================================================================
 // Start server
 // ============================================================================
 app.listen(PORT, HOST, () => {
-  console.log(`Clinic DB API v2 running at http://${HOST}:${PORT}`);
+  console.log(`Clinic DB API v3 running at http://${HOST}:${PORT}`);
   console.log(`Schema: ${CLINIC_SCHEMA}`);
   console.log(`Endpoints:`);
   console.log(`  GET  /health`);
   console.log(`  POST /api/patients/search`);
   console.log(`  POST /api/patients/background`);
+  console.log(`  POST /api/patients/normalize              ← NEW v3`);
   console.log(`  GET  /api/facility`);
   console.log(`  GET  /api/providers`);
   console.log(`  GET  /api/providers/:id`);
   console.log(`  GET  /api/payers`);
   console.log(`  GET  /api/payers/:id`);
   console.log(`  POST /api/payer-policy/match`);
+  console.log(`  POST /api/policy/extract-criteria         ← NEW v3`);
   console.log(`  GET  /api/letter-templates`);
   console.log(`  GET  /api/letter-templates/:id`);
-  console.log(`  POST /api/letters/generate-context  ← THE KEY ENDPOINT`);
+  console.log(`  GET  /api/letter-templates/:id/sections   ← NEW v3`);
+  console.log(`  POST /api/letter-templates/:id/sections   ← NEW v3`);
+  console.log(`  POST /api/letters/generate-context`);
+  console.log(`  POST /api/letters/generate-sections       ← NEW v3`);
+  console.log(`  POST /api/letters/validate                ← NEW v3`);
   console.log(`  POST /api/letters`);
   console.log(`  PATCH /api/letters/:id/status`);
   console.log(`  GET  /api/letters`);
   console.log(`  GET  /api/letters/:id`);
+  console.log(`  POST /api/generation-logs                 ← NEW v3`);
+  console.log(`  GET  /api/generation-logs                 ← NEW v3`);
+  console.log(`  PATCH /api/generation-logs/:id/outcome    ← NEW v3`);
 });
