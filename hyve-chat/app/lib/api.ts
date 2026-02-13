@@ -787,3 +787,308 @@ export async function clinicFetchLetters(input: {
   const out = await clinicGet("/api/letters", params);
   return ((out as any)?.letters || []) as LetterListItem[];
 }
+
+// ===============================
+// v3: Fetch letter detail
+// ===============================
+export type LetterDetail = {
+  letter_id: string;
+  patient_id: string;
+  letter_type: LetterType;
+  letter_date: string;
+  letter_body: string;
+  status: string;
+  subject_line?: string;
+  payer_id?: string;
+  provider_id?: string;
+  request_id?: string;
+  template_id?: string;
+  coverage_id?: string;
+  created_at: string;
+  updated_at?: string;
+  sent_date?: string;
+  response_date?: string;
+  auth_number?: string;
+  denial_reason?: string;
+  denial_code?: string;
+};
+
+export type LetterStatusHistoryItem = {
+  history_id: string;
+  letter_id: string;
+  old_status: string | null;
+  new_status: string;
+  changed_by?: string;
+  change_reason?: string;
+  changed_at: string;
+};
+
+export async function clinicFetchLetter(input: {
+  tenant_id?: number;
+  facility_id: string;
+  letter_id: string;
+}): Promise<{ letter: LetterDetail; status_history: LetterStatusHistoryItem[] }> {
+  const out = await clinicGet(`/api/letters/${input.letter_id}`, {
+    tenant_id: String(input.tenant_id ?? 1),
+    facility_id: input.facility_id,
+  });
+  return out as { letter: LetterDetail; status_history: LetterStatusHistoryItem[] };
+}
+
+// ===============================
+// v3: Template Sections (Blueprint §4.1)
+// ===============================
+export type TemplateSection = {
+  section_id: string;
+  section_name: string;
+  section_order: number;
+  instruction_prompt: string;
+  scaffold_text: string;
+  requires_policy: boolean;
+  requires_clinical: boolean;
+  is_active: boolean;
+};
+
+export async function clinicFetchTemplateSections(input: {
+  tenant_id?: number;
+  facility_id: string;
+  template_id: string;
+}): Promise<TemplateSection[]> {
+  const out = await clinicGet(`/api/letter-templates/${input.template_id}/sections`, {
+    tenant_id: String(input.tenant_id ?? 1),
+    facility_id: input.facility_id,
+  });
+  return ((out as any)?.sections || []) as TemplateSection[];
+}
+
+// ===============================
+// v3: Patient Normalization (Blueprint §5 Step 1)
+// ===============================
+export type NormalizedPatient = {
+  patient_id: string;
+  age: number;
+  sex: string | null;
+  diagnosis: { icd10: string; description: string; onset: string | null }[];
+  primary_diagnosis: { icd10: string; description: string } | null;
+  symptoms: string[];
+  symptom_duration: string | null;
+  failed_treatments: {
+    type: string;
+    visits: number | null;
+    response: string;
+    item: string | null;
+  }[];
+  medications: {
+    name: string;
+    dose: string;
+    outcome: string;
+    start_date: string | null;
+    end_date: string | null;
+  }[];
+  functional_limits: string[];
+  imaging_findings: {
+    modality: string;
+    body_part: string | null;
+    impression: string | null;
+    date: string | null;
+  }[];
+  therapy_history: {
+    type: string;
+    start_date: string | null;
+    end_date: string | null;
+    visits: number | null;
+    response: string | null;
+    item: string | null;
+  }[];
+};
+
+export async function clinicNormalizePatient(input: {
+  tenant_id?: number;
+  facility_id: string;
+  patient_id: string;
+}): Promise<NormalizedPatient> {
+  const out = await clinicPost("/api/patients/normalize", {
+    tenant_id: input.tenant_id ?? 1,
+    facility_id: input.facility_id,
+    patient_id: input.patient_id,
+  });
+  return (out as any)?.normalized as NormalizedPatient;
+}
+
+// ===============================
+// v3: Policy Criteria Extraction (Blueprint §5 Step 2)
+// ===============================
+export type PolicyCriteria = {
+  policy_id: string;
+  policy_name: string;
+  payer_id: string;
+  clinical_criteria: string | null;
+  required_documents: string | null;
+  required_failed_therapies: number;
+  min_therapy_weeks: number;
+  guideline_source: string | null;
+  appeal_deadline_days: number | null;
+  checklist: {
+    criterion_id: string;
+    text: string;
+    category: string;
+  }[];
+};
+
+export async function clinicExtractPolicyCriteria(input: {
+  tenant_id?: number;
+  facility_id: string;
+  policy_id?: string;
+  payer_id?: string;
+  cpt_code?: string;
+}): Promise<PolicyCriteria> {
+  const out = await clinicPost("/api/policy/extract-criteria", {
+    tenant_id: input.tenant_id ?? 1,
+    facility_id: input.facility_id,
+    policy_id: input.policy_id,
+    payer_id: input.payer_id,
+    cpt_code: input.cpt_code,
+  });
+  return (out as any)?.criteria as PolicyCriteria;
+}
+
+// ===============================
+// v3: Section Generation Pipeline (Blueprint §5 Steps 3-4)
+// ===============================
+export type SectionPayload = {
+  section_id: string;
+  section_name: string;
+  section_order: number;
+  instruction_prompt: string;
+  scaffold_text: string;
+  patient_facts: any;
+  policy_criteria: any;
+};
+
+export type GenerateSectionsResponse = {
+  letter_type: string;
+  template: { template_id: string; template_name: string; instructions?: string } | null;
+  patient: any;
+  coverage: any;
+  request: any;
+  provider: any;
+  facility: any;
+  policy_criteria: any;
+  clinical: any;
+  sections: SectionPayload[];
+  section_count: number;
+};
+
+export async function clinicGenerateSections(input: {
+  tenant_id?: number;
+  facility_id: string;
+  patient_id: string;
+  letter_type?: LetterType;
+  template_id?: string;
+  request_id?: string;
+  provider_id?: string;
+  coverage_id?: string;
+}): Promise<GenerateSectionsResponse> {
+  const out = await clinicPost("/api/letters/generate-sections", {
+    tenant_id: input.tenant_id ?? 1,
+    facility_id: input.facility_id,
+    patient_id: input.patient_id,
+    letter_type: input.letter_type || "initial_auth",
+    template_id: input.template_id,
+    request_id: input.request_id,
+    provider_id: input.provider_id,
+    coverage_id: input.coverage_id,
+  });
+  return out as GenerateSectionsResponse;
+}
+
+// ===============================
+// v3: Validation Pass (Blueprint §6)
+// ===============================
+export type ValidationIssue = {
+  type: "missing_evidence" | "criteria_gap" | "weak_reasoning" | "missing_document";
+  severity: "high" | "medium" | "low";
+  section?: string;
+  criterion_index?: number;
+  criterion_text?: string;
+  message: string;
+};
+
+export type ValidationResult = {
+  passed: boolean;
+  score: number | null;
+  criteria_met: number;
+  criteria_total: number;
+  issue_count: number;
+  high_severity_count: number;
+  medium_severity_count: number;
+  low_severity_count: number;
+  issues: ValidationIssue[];
+};
+
+export async function clinicValidateLetter(input: {
+  tenant_id?: number;
+  facility_id: string;
+  letter_body?: string;
+  sections?: { content: string }[];
+  policy_id?: string;
+  payer_id?: string;
+  cpt_code?: string;
+}): Promise<ValidationResult> {
+  const out = await clinicPost("/api/letters/validate", {
+    tenant_id: input.tenant_id ?? 1,
+    facility_id: input.facility_id,
+    letter_body: input.letter_body,
+    sections: input.sections,
+    policy_id: input.policy_id,
+    payer_id: input.payer_id,
+    cpt_code: input.cpt_code,
+  });
+  return (out as any)?.validation as ValidationResult;
+}
+
+// ===============================
+// v3: Generation Logging (Blueprint §8)
+// ===============================
+export async function clinicLogGeneration(input: {
+  tenant_id?: number;
+  facility_id: string;
+  letter_id?: string;
+  request_id?: string;
+  patient_id?: string;
+  payer_id?: string;
+  provider_id?: string;
+  template_id?: string;
+  letter_type?: string;
+  cpt_codes?: string[];
+  icd10_codes?: string[];
+  policy_refs?: string[];
+  generation_time_ms?: number;
+  section_count?: number;
+  validation_passed?: boolean;
+  validation_issues?: any;
+  model_id?: string;
+}): Promise<{ log_id: string }> {
+  const out = await clinicPost("/api/generation-logs", {
+    tenant_id: input.tenant_id ?? 1,
+    facility_id: input.facility_id,
+    ...input,
+  });
+  return out as { log_id: string };
+}
+
+export async function clinicUpdateGenerationOutcome(input: {
+  tenant_id?: number;
+  facility_id: string;
+  log_id: string;
+  outcome: string;
+  user_edits?: any;
+}): Promise<{ log_id: string; outcome: string }> {
+  const out = await clinicPatch(`/api/generation-logs/${input.log_id}/outcome`, {
+    tenant_id: input.tenant_id ?? 1,
+    facility_id: input.facility_id,
+    outcome: input.outcome,
+    user_edits: input.user_edits,
+  });
+  return out as { log_id: string; outcome: string };
+}
