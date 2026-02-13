@@ -1,0 +1,14 @@
+{
+  "name": "clinic-db-api",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.4",
+    "express": "^4.19.2",
+    "pg": "^8.12.0"
+  }
+}
