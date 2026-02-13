@@ -46,6 +46,9 @@ import {
   clinicFetchProviders,
   clinicGenerateLetterContext,
   clinicSaveLetter,
+  clinicGenerateSections,
+  clinicValidateLetter,
+  clinicLogGeneration,
   type Config as ApiConfig,
   type NonPhiIntent,
   type PatientBackground,
@@ -698,6 +701,7 @@ export default function ChatScreen() {
     if (!activePatient?.patient_id) { Alert.alert("No patient", "Select an active patient first."); return; }
 
     setBusy(true);
+    const genStartTime = Date.now();
     try {
       const typeLabel = LETTER_TYPES.find((t) => t.key === letterType)?.label || letterType;
       const provLabel = providers.find((p) => p.provider_id === selectedProviderId);
@@ -709,7 +713,7 @@ export default function ChatScreen() {
 
       // Step 1: Get full context from clinic DB API
       // The server auto-matches the payer policy using the payer from the selected coverage.
-      // User picks the insurance → system grabs the policy → feeds into LLM. No manual policy selection.
+      // User picks the insurance -> system grabs the policy -> feeds into LLM. No manual policy selection.
       const letterCtx = await clinicGenerateLetterContext({
         tenant_id: 1,
         facility_id: cfg.facilityId,
@@ -722,6 +726,23 @@ export default function ChatScreen() {
 
       setLastLetterContext(letterCtx);
       const ctx = letterCtx.context;
+
+      // Step 1b: Generate section payloads for section-based pipeline
+      let sectionsData: Awaited<ReturnType<typeof clinicGenerateSections>> | null = null;
+      try {
+        sectionsData = await clinicGenerateSections({
+          tenant_id: 1,
+          facility_id: cfg.facilityId,
+          patient_id: activePatient.patient_id,
+          letter_type: letterType,
+          template_id: ctx.template?.template_id || undefined,
+          request_id: selectedRequestId || ctx.request?.request_id || undefined,
+          provider_id: selectedProviderId || ctx.provider?.provider_id || undefined,
+          coverage_id: selectedCoverageId || ctx.coverage?.coverage_id || undefined,
+        });
+      } catch (secErr: any) {
+        console.log("Section generation warning (falling back to flat generation):", secErr?.message);
+      }
 
       // Step 2: Build non-PHI packet for the LLM
       let packet = nonPhiPacket;
@@ -738,7 +759,7 @@ export default function ChatScreen() {
       const finalCaseId = resolvedCaseId || packet?.case_id || makeCaseId();
       if (!caseId) setCaseId(finalCaseId);
 
-      // Step 3: Augment the packet with template + policy (non-PHI parts only)
+      // Step 3: Augment the packet with template + policy + sections (non-PHI parts only)
       const augmentedPacket = {
         ...packet,
         letter_type: letterType,
@@ -761,6 +782,8 @@ export default function ChatScreen() {
               appeal_deadline: ctx.parent_letter.appeal_deadline,
             }
           : null,
+        sections: sectionsData?.sections ?? null,
+        section_count: sectionsData?.section_count ?? 0,
       };
 
       // Step 4: Send to n8n/Ollama via existing chatNonPhiCase
@@ -781,9 +804,27 @@ export default function ChatScreen() {
       // Step 5: Reinsert PHI locally
       const filled = await reinsertPHILocally(out.text);
 
-      // Step 6: Save letter to DB
+      const generationTimeMs = Date.now() - genStartTime;
+
+      // Step 6: Validate the generated letter
+      let validationResult: Awaited<ReturnType<typeof clinicValidateLetter>> | null = null;
       try {
-        await clinicSaveLetter({
+        validationResult = await clinicValidateLetter({
+          tenant_id: 1,
+          facility_id: cfg.facilityId,
+          letter_body: filled,
+          sections: sectionsData?.sections?.map((s) => ({ content: s.scaffold_text })),
+          policy_id: ctx.payer_policy?.policy_id,
+          payer_id: ctx.coverage?.payer_id,
+        });
+      } catch (valErr: any) {
+        console.log("Validation warning:", valErr?.message);
+      }
+
+      // Step 7: Save letter to DB
+      let savedLetterId: string | undefined;
+      try {
+        const saveResult = await clinicSaveLetter({
           tenant_id: 1,
           facility_id: cfg.facilityId,
           patient_id: activePatient.patient_id,
@@ -797,12 +838,57 @@ export default function ChatScreen() {
           subject_line: `${typeLabel} — ${activePatient.display_label}`,
           status: "draft",
         });
+        savedLetterId = (saveResult as any)?.letter_id;
       } catch (saveErr: any) {
         console.log("Save letter warning:", saveErr?.message);
         // Non-blocking — letter is still shown to user
       }
 
+      // Step 8: Log the generation with timing + validation data
+      try {
+        await clinicLogGeneration({
+          tenant_id: 1,
+          facility_id: cfg.facilityId,
+          letter_id: savedLetterId,
+          request_id: selectedRequestId || ctx.request?.request_id || undefined,
+          patient_id: activePatient.patient_id,
+          payer_id: ctx.coverage?.payer_id || undefined,
+          provider_id: selectedProviderId || ctx.provider?.provider_id || undefined,
+          template_id: ctx.template?.template_id || undefined,
+          letter_type: letterType,
+          generation_time_ms: generationTimeMs,
+          section_count: sectionsData?.section_count ?? 0,
+          validation_passed: validationResult?.passed ?? undefined,
+          validation_issues: validationResult?.issues ?? undefined,
+        });
+      } catch (logErr: any) {
+        console.log("Generation log warning:", logErr?.message);
+        // Non-blocking — letter is still shown to user
+      }
+
+      // Show letter to user
       push("assistant", filled, out.artifacts);
+
+      // Step 9: Show validation summary in chat
+      if (validationResult) {
+        const statusIcon = validationResult.passed ? "✅" : "⚠️";
+        const scoreDisplay = validationResult.score != null ? ` (${validationResult.score}%)` : "";
+        const criteriaDisplay = `${validationResult.criteria_met}/${validationResult.criteria_total} criteria met`;
+        let validationMsg = `${statusIcon} Validation${scoreDisplay}: ${criteriaDisplay}`;
+        if (validationResult.issue_count > 0) {
+          validationMsg += `\n${validationResult.issue_count} issue(s):`;
+          if (validationResult.high_severity_count > 0) validationMsg += ` ${validationResult.high_severity_count} high`;
+          if (validationResult.medium_severity_count > 0) validationMsg += ` ${validationResult.medium_severity_count} medium`;
+          if (validationResult.low_severity_count > 0) validationMsg += ` ${validationResult.low_severity_count} low`;
+          // Show up to 3 high-severity issues inline
+          const highIssues = validationResult.issues.filter((i) => i.severity === "high").slice(0, 3);
+          for (const issue of highIssues) {
+            validationMsg += `\n  • ${issue.message}`;
+          }
+        }
+        push("assistant", validationMsg);
+      }
+
       setLastError("");
       setAttachPacket(true);
       setPatientBarCollapsed(true);
