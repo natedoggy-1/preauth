@@ -56,7 +56,7 @@ function safeFilename(name: string) {
   return String(name || "preauth.pdf").replace(/[^\w.\- ]+/g, "_");
 }
 
-async function parseJsonOrText(text: string) {
+function parseJsonOrText(text: string) {
   const t = String(text ?? "").trim();
   if (!t) return null;
   try { return JSON.parse(t); } catch { return t; }
@@ -155,8 +155,11 @@ async function clinicGet(path: string, queryParams?: Record<string, string>) {
     headers: clinicHeaders(),
   });
   const text = await res.text().catch(() => "");
-  const out = await parseJsonOrText(text);
-  if (!res.ok) throw new Error(`GET ${path} ${res.status}: ${typeof out === "string" ? out : JSON.stringify(out)}`);
+  const out = parseJsonOrText(text);
+  if (!res.ok) {
+    const safeMsg = typeof out === "object" && out?.error ? String(out.error) : `status ${res.status}`;
+    throw new Error(`GET ${path} failed: ${safeMsg}`);
+  }
   return out;
 }
 
@@ -168,8 +171,11 @@ async function clinicPost(path: string, body: any) {
     body: JSON.stringify(body),
   });
   const text = await res.text().catch(() => "");
-  const out = await parseJsonOrText(text);
-  if (!res.ok) throw new Error(`POST ${path} ${res.status}: ${typeof out === "string" ? out : JSON.stringify(out)}`);
+  const out = parseJsonOrText(text);
+  if (!res.ok) {
+    const safeMsg = typeof out === "object" && out?.error ? String(out.error) : `status ${res.status}`;
+    throw new Error(`POST ${path} failed: ${safeMsg}`);
+  }
   return out;
 }
 
@@ -181,8 +187,11 @@ async function clinicPatch(path: string, body: any) {
     body: JSON.stringify(body),
   });
   const text = await res.text().catch(() => "");
-  const out = await parseJsonOrText(text);
-  if (!res.ok) throw new Error(`PATCH ${path} ${res.status}: ${typeof out === "string" ? out : JSON.stringify(out)}`);
+  const out = parseJsonOrText(text);
+  if (!res.ok) {
+    const safeMsg = typeof out === "object" && out?.error ? String(out.error) : `status ${res.status}`;
+    throw new Error(`PATCH ${path} failed: ${safeMsg}`);
+  }
   return out;
 }
 
@@ -223,7 +232,7 @@ export async function chat(
   const contentType = (res.headers.get("content-type") || "").toLowerCase();
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    const out = await parseJsonOrText(text);
+    const out = parseJsonOrText(text);
     throw new Error(`chat ${res.status}: ${typeof out === "string" ? out : JSON.stringify(out)}`);
   }
   if (contentType.includes("application/pdf")) {
@@ -237,7 +246,7 @@ export async function chat(
     return { assistant_text: "Prior authorization letter ready.", artifacts: [{ type: "pdf", uri, filename, mime_type: "application/pdf" }] };
   }
   const text = await res.text();
-  const out = await parseJsonOrText(text);
+  const out = parseJsonOrText(text);
   return normalizeWebhookOutput(out);
 }
 
@@ -310,7 +319,7 @@ export async function ingest(
   if (resp.status < 200 || resp.status >= 300) {
     throw new Error(`ingest ${resp.status}: ${resp.body}`);
   }
-  return await parseJsonOrText(resp.body);
+  return parseJsonOrText(resp.body);
 }
 
 // ===============================
@@ -362,7 +371,7 @@ export async function chatNonPhiCase(cfg: Config, input: NonPhiChatInput) {
   const contentType = (res.headers.get("content-type") || "").toLowerCase();
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    const out = await parseJsonOrText(text);
+    const out = parseJsonOrText(text);
     throw new Error(`chatNonPhiCase ${res.status}: ${typeof out === "string" ? out : JSON.stringify(out)}`);
   }
   if (contentType.includes("application/pdf")) {
@@ -376,7 +385,7 @@ export async function chatNonPhiCase(cfg: Config, input: NonPhiChatInput) {
     return { assistant_text: "Prior authorization letter ready.", artifacts: [{ type: "pdf", uri, filename, mime_type: "application/pdf" }] };
   }
   const text = await res.text();
-  const out = await parseJsonOrText(text);
+  const out = parseJsonOrText(text);
   return normalizeWebhookOutput(out);
 }
 
@@ -1175,7 +1184,7 @@ async function clinicPut(path: string, body: any) {
     body: JSON.stringify(body),
   });
   const text = await res.text().catch(() => "");
-  const out = await parseJsonOrText(text);
+  const out = parseJsonOrText(text);
   if (!res.ok) throw new Error(`PUT ${path} ${res.status}: ${typeof out === "string" ? out : JSON.stringify(out)}`);
   return out;
 }

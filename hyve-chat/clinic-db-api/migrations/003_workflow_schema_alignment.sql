@@ -75,9 +75,9 @@ CREATE INDEX IF NOT EXISTS idx_payer_policies_key
 ALTER TABLE demo.payers
   ADD COLUMN IF NOT EXISTS payer_key VARCHAR(64);
 
--- Backfill payer_key from payer_id (lowercase)
+-- Backfill payer_key from payer_id (preserve original case for consistency with API lookups)
 UPDATE demo.payers
-  SET payer_key = LOWER(payer_id)
+  SET payer_key = payer_id
   WHERE payer_key IS NULL;
 
 CREATE INDEX IF NOT EXISTS idx_payers_key

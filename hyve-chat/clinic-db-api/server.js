@@ -24,6 +24,7 @@
 import dotenv from "dotenv";
 import { fileURLToPath } from "url";
 import path from "path";
+import crypto from "crypto";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -43,6 +44,9 @@ const PORT = Number(process.env.PORT || 7777);
 const HOST = String(process.env.HOST || "127.0.0.1").trim();
 const BRIDGE_TOKEN = String(process.env.BRIDGE_TOKEN || "dev-bridge-token").trim();
 const CLINIC_SCHEMA = String(process.env.CLINIC_SCHEMA || "demo").trim();
+if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(CLINIC_SCHEMA)) {
+  throw new Error(`Invalid CLINIC_SCHEMA: "${CLINIC_SCHEMA}" — must be a valid SQL identifier`);
+}
 const S = CLINIC_SCHEMA; // shorthand for SQL interpolation
 
 console.log("BRIDGE_BOOT v2", {
@@ -81,12 +85,14 @@ function requireToken(req, res, next) {
   return next();
 }
 
-// Helper: default tenant/facility from query or body
+// Helper: tenant/facility from query or body (required — no silent defaults)
 function tf(req) {
-  const tenant_id = Number(req.body?.tenant_id ?? req.query?.tenant_id ?? 1);
-  const facility_id = String(
-    req.body?.facility_id ?? req.query?.facility_id ?? "FAC-DEMO"
-  ).trim();
+  const raw_tid = req.body?.tenant_id ?? req.query?.tenant_id;
+  const raw_fid = req.body?.facility_id ?? req.query?.facility_id;
+  const tenant_id = Number(raw_tid ?? 1);
+  const facility_id = String(raw_fid ?? "FAC-DEMO").trim();
+  if (isNaN(tenant_id) || tenant_id < 1) throw new Error("Invalid tenant_id");
+  if (!facility_id) throw new Error("facility_id is required");
   return { tenant_id, facility_id };
 }
 
@@ -285,7 +291,7 @@ app.get("/api/providers", requireToken, async (req, res) => {
 
 app.get("/api/providers/:id", requireToken, async (req, res) => {
   const { tenant_id, facility_id } = tf(req);
-  const provider_id = req.params.id;
+  const provider_id = String(req.params.id || "").trim();
   try {
     const r = await pool.query(
       `SELECT * FROM ${S}.providers WHERE tenant_id=$1 AND facility_id=$2 AND provider_id=$3 LIMIT 1;`,
@@ -315,7 +321,7 @@ app.get("/api/payers", requireToken, async (req, res) => {
 
 app.get("/api/payers/:id", requireToken, async (req, res) => {
   const { tenant_id, facility_id } = tf(req);
-  const payer_id = req.params.id;
+  const payer_id = String(req.params.id || "").trim();
   try {
     const r = await pool.query(
       `SELECT * FROM ${S}.payers WHERE tenant_id=$1 AND facility_id=$2 AND payer_id=$3 LIMIT 1;`,
@@ -730,7 +736,7 @@ app.post("/api/letters", requireToken, async (req, res) => {
   const { tenant_id, facility_id } = tf(req);
   const b = req.body;
 
-  const letter_id = b.letter_id || `LTR-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+  const letter_id = b.letter_id || `LTR-${Date.now()}-${crypto.randomUUID().slice(0, 12)}`;
 
   try {
     await pool.query(
@@ -766,7 +772,7 @@ app.post("/api/letters", requireToken, async (req, res) => {
 // ============================================================================
 app.patch("/api/letters/:id/status", requireToken, async (req, res) => {
   const { tenant_id, facility_id } = tf(req);
-  const letter_id = req.params.id;
+  const letter_id = String(req.params.id || "").trim();
   const new_status = String(req.body?.status ?? "").trim();
   const changed_by = req.body?.changed_by || null;
   const change_reason = req.body?.change_reason || null;
@@ -870,7 +876,7 @@ app.get("/api/letters/:id", requireToken, async (req, res) => {
 
 app.get("/api/letter-templates/:id/sections", requireToken, async (req, res) => {
   const { tenant_id, facility_id } = tf(req);
-  const template_id = req.params.id;
+  const template_id = String(req.params.id || "").trim();
   try {
     const r = await pool.query(
       `SELECT section_id, section_name, section_order, instruction_prompt,
@@ -886,14 +892,14 @@ app.get("/api/letter-templates/:id/sections", requireToken, async (req, res) => 
 
 app.post("/api/letter-templates/:id/sections", requireToken, async (req, res) => {
   const { tenant_id, facility_id } = tf(req);
-  const template_id = req.params.id;
+  const template_id = String(req.params.id || "").trim();
   const sections = Array.isArray(req.body?.sections) ? req.body.sections : [];
   if (!sections.length) return res.status(400).json({ ok: false, error: "sections array required" });
 
   try {
     const inserted = [];
     for (const sec of sections) {
-      const section_id = sec.section_id || `SEC-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+      const section_id = sec.section_id || `SEC-${Date.now()}-${crypto.randomUUID().slice(0, 12)}`;
       await pool.query(
         `INSERT INTO ${S}.template_sections
          (tenant_id, facility_id, section_id, template_id, section_name, section_order,
@@ -1267,9 +1273,9 @@ app.post("/api/letters/generate-sections", requireToken, async (req, res) => {
 
     // 3. Get clinical data
     const [problemsRes, therapyRes, imagingRes, encountersRes, medTrialsRes] = await Promise.all([
-      pool.query(`SELECT * FROM ${S}.problems WHERE tenant_id=$1 AND facility_id=$2 AND patient_id=$3 ORDER BY problem_id;`, [tenant_id, facility_id, patient_id]),
-      pool.query(`SELECT * FROM ${S}.therapy WHERE tenant_id=$1 AND facility_id=$2 AND patient_id=$3 ORDER BY start_date ASC NULLS LAST;`, [tenant_id, facility_id, patient_id]),
-      pool.query(`SELECT * FROM ${S}.imaging WHERE tenant_id=$1 AND facility_id=$2 AND patient_id=$3 ORDER BY imaging_date DESC NULLS LAST;`, [tenant_id, facility_id, patient_id]),
+      pool.query(`SELECT * FROM ${S}.problems WHERE tenant_id=$1 AND facility_id=$2 AND patient_id=$3 ORDER BY problem_id LIMIT 100;`, [tenant_id, facility_id, patient_id]),
+      pool.query(`SELECT * FROM ${S}.therapy WHERE tenant_id=$1 AND facility_id=$2 AND patient_id=$3 ORDER BY start_date ASC NULLS LAST LIMIT 50;`, [tenant_id, facility_id, patient_id]),
+      pool.query(`SELECT * FROM ${S}.imaging WHERE tenant_id=$1 AND facility_id=$2 AND patient_id=$3 ORDER BY imaging_date DESC NULLS LAST LIMIT 50;`, [tenant_id, facility_id, patient_id]),
       pool.query(`SELECT * FROM ${S}.encounters WHERE tenant_id=$1 AND facility_id=$2 AND patient_id=$3 ORDER BY encounter_date DESC NULLS LAST LIMIT 15;`, [tenant_id, facility_id, patient_id]),
       pool.query(`SELECT * FROM ${S}.med_trials WHERE tenant_id=$1 AND facility_id=$2 AND patient_id=$3 ORDER BY start_date ASC NULLS LAST;`, [tenant_id, facility_id, patient_id]),
     ]);
@@ -1613,7 +1619,7 @@ app.post("/api/letters/validate", requireToken, async (req, res) => {
 app.post("/api/generation-logs", requireToken, async (req, res) => {
   const { tenant_id, facility_id } = tf(req);
   const b = req.body;
-  const log_id = b.log_id || `LOG-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+  const log_id = b.log_id || `LOG-${Date.now()}-${crypto.randomUUID().slice(0, 12)}`;
 
   try {
     await pool.query(
@@ -1643,7 +1649,7 @@ app.post("/api/generation-logs", requireToken, async (req, res) => {
 app.get("/api/generation-logs", requireToken, async (req, res) => {
   const { tenant_id, facility_id } = tf(req);
   const patient_id = String(req.query?.patient_id ?? "").trim();
-  const limit = Math.min(Number(req.query?.limit ?? 50), 200);
+  const limit = Math.min(Math.max(Number(req.query?.limit ?? 50) || 50, 1), 200);
 
   try {
     let sql = `SELECT * FROM ${S}.generation_logs WHERE tenant_id=$1 AND facility_id=$2`;
@@ -1661,7 +1667,7 @@ app.get("/api/generation-logs", requireToken, async (req, res) => {
 
 app.patch("/api/generation-logs/:id/outcome", requireToken, async (req, res) => {
   const { tenant_id, facility_id } = tf(req);
-  const log_id = req.params.id;
+  const log_id = String(req.params.id || "").trim();
   const outcome = String(req.body?.outcome ?? "").trim();
   const user_edits = req.body?.user_edits || null;
 
@@ -1684,7 +1690,7 @@ app.patch("/api/generation-logs/:id/outcome", requireToken, async (req, res) => 
 
 app.get("/api/letters/:id/pdf", requireToken, async (req, res) => {
   const { tenant_id, facility_id } = tf(req);
-  const letter_id = req.params.id;
+  const letter_id = String(req.params.id || "").trim();
 
   try {
     // Fetch letter, facility, and provider data in parallel
@@ -1694,6 +1700,7 @@ app.get("/api/letters/:id/pdf", requireToken, async (req, res) => {
                 p.dob AS patient_dob
          FROM ${S}.generated_letters gl
          LEFT JOIN ${S}.patients p ON p.patient_id = gl.patient_id
+              AND p.tenant_id = gl.tenant_id AND p.facility_id = gl.facility_id
          WHERE gl.tenant_id=$1 AND gl.facility_id=$2 AND gl.letter_id=$3`,
         [tenant_id, facility_id, letter_id]
       ),
@@ -1930,7 +1937,7 @@ app.use("/api", (req, res, next) => {
         res.statusCode,
         duration,
       ]
-    ).catch(() => {}); // silently ignore audit log failures
+    ).catch((err) => console.error("Audit log insert failed:", err.message)); // log but don't block
 
     originalEnd.apply(res, args);
   };
