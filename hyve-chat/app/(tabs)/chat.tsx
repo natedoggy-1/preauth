@@ -117,32 +117,51 @@ type CoverageRow = {
   group_id?: string | null;
 };
 
+// -- Professional dark theme --------------------------------------------------
 const UI = {
-  bg: "#0b0f14",
-  panelBg: "#0f172a",
-  card: "#111a25",
-  card2: "#0f172a",
-  border: "#223043",
-  text: "#e8eef7",
-  subtext: "#9fb0c3",
-  danger: "#ef4444",
-  primary: "#1f6feb",
+  bg: "#090c10",
+  panelBg: "#0d1117",
+  surface: "#111820",
+  card: "#151d28",
+  card2: "#131a24",
+  border: "#1c2a3a",
+  borderLight: "#263545",
+  text: "#ecf0f6",
+  subtext: "#8b9cb5",
+  muted: "#5c6f88",
+  danger: "#f0465a",
+  dangerBg: "rgba(240,70,90,0.10)",
+  primary: "#58a6ff",
+  primaryDark: "#388bfd",
+  primaryBg: "rgba(88,166,255,0.10)",
   primaryText: "#ffffff",
-  btn: "#1b2636",
-  btnText: "#e8eef7",
-  success: "#16a34a",
-  info: "#0ea5e9",
-  warn: "#f59e0b",
-  overlay: "rgba(0,0,0,0.55)",
+  btn: "#171f2b",
+  btnHover: "#1f2937",
+  btnText: "#c9d5e3",
+  success: "#3fb950",
+  successBg: "rgba(63,185,80,0.10)",
+  info: "#58a6ff",
+  infoBg: "rgba(88,166,255,0.10)",
+  warn: "#d29922",
+  warnBg: "rgba(210,153,34,0.10)",
+  overlay: "rgba(0,0,0,0.70)",
+  glass: "rgba(13,17,23,0.92)",
+  accent: "#79c0ff",
+  radius: 10,
+  radiusSm: 8,
+  radiusLg: 14,
+  radiusPill: 999,
 };
 
-// ✅ NEW: letter type config
 const LETTER_TYPES: { key: LetterType; label: string; color: string }[] = [
   { key: "initial_auth", label: "Initial Auth", color: UI.primary },
-  { key: "peer_to_peer", label: "Peer-to-Peer", color: UI.info },
+  { key: "peer_to_peer", label: "Peer-to-Peer", color: UI.accent },
   { key: "appeal", label: "Appeal", color: UI.warn },
   { key: "urgent_auth", label: "Urgent", color: UI.danger },
 ];
+
+const N8N_TIMEOUT_MS = 90_000; // 90s timeout for n8n webhook calls
+const VALID_LETTER_TYPES = ["initial_auth", "peer_to_peer", "appeal", "urgent_auth"];
 
 function safeFilename(name: string) {
   return String(name || "report.pdf").replace(/[^\w.\- ]+/g, "_");
@@ -219,28 +238,17 @@ function normalizeChatResponse(resp: any): { text: string; artifacts?: Artifact[
 }
 
 function Chip({ label, tone, compact }: { label: string; tone: "neutral" | "success" | "danger" | "info" | "warn"; compact?: boolean }) {
-  const bg =
-    tone === "success" ? "rgba(22,163,74,0.18)"
-    : tone === "danger" ? "rgba(239,68,68,0.18)"
-    : tone === "info" ? "rgba(14,165,233,0.18)"
-    : tone === "warn" ? "rgba(245,158,11,0.18)"
-    : "rgba(148,163,184,0.12)";
-  const border =
-    tone === "success" ? "rgba(22,163,74,0.35)"
-    : tone === "danger" ? "rgba(239,68,68,0.35)"
-    : tone === "info" ? "rgba(14,165,233,0.35)"
-    : tone === "warn" ? "rgba(245,158,11,0.35)"
-    : "rgba(148,163,184,0.2)";
-  const textColor =
-    tone === "success" ? "#86efac"
-    : tone === "danger" ? "#fca5a5"
-    : tone === "info" ? "#7dd3fc"
-    : tone === "warn" ? "#fde68a"
-    : UI.subtext;
-
+  const toneMap = {
+    success: { bg: UI.successBg, border: "rgba(63,185,80,0.25)", text: "#7ee787" },
+    danger: { bg: UI.dangerBg, border: "rgba(240,70,90,0.25)", text: "#ffa198" },
+    info: { bg: UI.infoBg, border: "rgba(88,166,255,0.25)", text: "#79c0ff" },
+    warn: { bg: UI.warnBg, border: "rgba(210,153,34,0.25)", text: "#e3b341" },
+    neutral: { bg: "rgba(139,156,181,0.08)", border: "rgba(139,156,181,0.15)", text: UI.subtext },
+  };
+  const t = toneMap[tone];
   return (
-    <View style={{ paddingHorizontal: compact ? 8 : 10, paddingVertical: compact ? 4 : 6, borderRadius: 999, borderWidth: 1, borderColor: border, backgroundColor: bg }}>
-      <Text style={{ color: textColor, fontSize: compact ? 11 : 12, fontWeight: "800" }}>{label}</Text>
+    <View style={{ paddingHorizontal: compact ? 7 : 9, paddingVertical: compact ? 3 : 5, borderRadius: UI.radiusPill, borderWidth: 1, borderColor: t.border, backgroundColor: t.bg }}>
+      <Text style={{ color: t.text, fontSize: compact ? 10 : 11, fontWeight: "600", letterSpacing: 0.3 }}>{label}</Text>
     </View>
   );
 }
@@ -322,6 +330,7 @@ export default function ChatScreen() {
 
   // ──────────── Init ────────────
   useEffect(() => {
+    let mounted = true;
     (async () => {
       try {
         const [u, k, f, provId, lt] = await Promise.all([
@@ -331,18 +340,21 @@ export default function ChatScreen() {
           Storage.getItem(Keys.activeProviderId),
           Storage.getItem(Keys.lastLetterType),
         ]);
+        if (!mounted) return;
         if (u) setBaseUrl(String(u));
         if (k) setApiKey(String(k));
         if (f) setFacilityId(String(f));
         if (provId) setSelectedProviderId(provId);
-        if (lt && ["initial_auth", "peer_to_peer", "appeal", "urgent_auth"].includes(lt)) {
+        if (lt && VALID_LETTER_TYPES.includes(lt)) {
           setLetterType(lt as LetterType);
         }
 
         await hydrateActivePatient();
+        if (!mounted) return;
         await loadProviders(f || "FAC-DEMO");
       } catch {}
     })();
+    return () => { mounted = false; };
   }, []);
 
   // ✅ NEW: Load providers from DB
@@ -724,7 +736,6 @@ export default function ChatScreen() {
         coverage_id: selectedCoverageId || undefined,
       });
 
-      setLastLetterContext(letterCtx);
       const ctx = letterCtx.context;
 
       // Step 1b: Generate section payloads for section-based pipeline
@@ -782,11 +793,11 @@ export default function ChatScreen() {
               appeal_deadline: ctx.parent_letter.appeal_deadline,
             }
           : null,
-        sections: sectionsData?.sections ?? null,
+        sections: sectionsData?.sections ?? [],
         section_count: sectionsData?.section_count ?? 0,
       };
 
-      // Step 4: Send to n8n/Ollama via existing chatNonPhiCase
+      // Step 4: Send to n8n/Ollama via existing chatNonPhiCase (with timeout)
       const msg = input.trim() || `generate ${typeLabel.toLowerCase()} letter`;
       if (input.trim()) setInput("");
 
@@ -798,10 +809,14 @@ export default function ChatScreen() {
         file_ids: pickedFiles.map((f) => f.file_id),
       };
 
-      const resp = await chatNonPhiCase(cfg, inputForApi);
+      const resp = await Promise.race([
+        chatNonPhiCase(cfg, inputForApi),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("Generation timed out. The AI service did not respond within 90 seconds.")), N8N_TIMEOUT_MS)),
+      ]);
       const out = normalizeChatResponse(resp);
 
-      // Step 5: Reinsert PHI locally
+      // Step 5: Reinsert PHI locally (set context now that generation succeeded)
+      setLastLetterContext(letterCtx);
       const filled = await reinsertPHILocally(out.text);
 
       const generationTimeMs = Date.now() - genStartTime;
@@ -813,7 +828,7 @@ export default function ChatScreen() {
           tenant_id: 1,
           facility_id: cfg.facilityId,
           letter_body: filled,
-          sections: sectionsData?.sections?.map((s) => ({ content: s.scaffold_text })),
+          sections: (sectionsData?.sections ?? []).map((s: any) => ({ content: s.scaffold_text })),
           policy_id: ctx.payer_policy?.policy_id,
           payer_id: ctx.coverage?.payer_id,
         });
@@ -966,18 +981,17 @@ export default function ChatScreen() {
         onPress={() => setIntent(i)}
         disabled={busy}
         style={{
-          paddingHorizontal: 10, paddingVertical: 8, borderRadius: 999, borderWidth: 1,
-          borderColor: active ? "rgba(31,111,235,0.7)" : UI.border,
-          backgroundColor: active ? "rgba(31,111,235,0.25)" : "rgba(148,163,184,0.08)",
-          opacity: busy ? 0.75 : 1,
+          paddingHorizontal: 10, paddingVertical: 7, borderRadius: UI.radiusPill, borderWidth: 1,
+          borderColor: active ? `${UI.primary}55` : UI.border,
+          backgroundColor: active ? UI.primaryBg : "rgba(139,156,181,0.05)",
+          opacity: busy ? 0.5 : 1,
         }}
       >
-        <Text style={{ color: active ? UI.text : UI.subtext, fontWeight: "900", fontSize: 12 }}>{label}</Text>
+        <Text style={{ color: active ? UI.primary : UI.subtext, fontWeight: "500", fontSize: 11, letterSpacing: 0.2 }}>{label}</Text>
       </Pressable>
     );
   }
 
-  // ✅ NEW: Letter type pill
   function letterTypePill(lt: typeof LETTER_TYPES[number]) {
     const active = letterType === lt.key;
     return (
@@ -986,13 +1000,13 @@ export default function ChatScreen() {
         onPress={() => setLetterType(lt.key)}
         disabled={busy}
         style={{
-          paddingHorizontal: 10, paddingVertical: 8, borderRadius: 999, borderWidth: 1,
-          borderColor: active ? lt.color : UI.border,
-          backgroundColor: active ? `${lt.color}33` : "rgba(148,163,184,0.08)",
-          opacity: busy ? 0.75 : 1,
+          paddingHorizontal: 10, paddingVertical: 7, borderRadius: UI.radiusPill, borderWidth: 1,
+          borderColor: active ? `${lt.color}44` : UI.border,
+          backgroundColor: active ? `${lt.color}18` : "rgba(139,156,181,0.05)",
+          opacity: busy ? 0.5 : 1,
         }}
       >
-        <Text style={{ color: active ? UI.text : UI.subtext, fontWeight: "900", fontSize: 12 }}>{lt.label}</Text>
+        <Text style={{ color: active ? lt.color : UI.subtext, fontWeight: active ? "600" : "500", fontSize: 11, letterSpacing: 0.2 }}>{lt.label}</Text>
       </Pressable>
     );
   }
@@ -1000,33 +1014,29 @@ export default function ChatScreen() {
   function Bubble({ item }: { item: Msg }) {
     if (item.role === "system") {
       return (
-        <View style={{ paddingHorizontal: 16, paddingVertical: 10 }}>
-          <Text style={{ color: UI.subtext, fontSize: 13, textAlign: "center", lineHeight: 18 }}>{item.content}</Text>
+        <View style={{ paddingHorizontal: 20, paddingVertical: 12 }}>
+          <Text style={{ color: UI.muted, fontSize: 12, textAlign: "center", lineHeight: 17, letterSpacing: 0.2 }}>{item.content}</Text>
         </View>
       );
     }
     const isUser = item.role === "user";
+    const bubbleBg = isUser ? UI.primaryDark : UI.card;
+    const bubbleBorder = isUser ? "transparent" : UI.border;
     return (
-      <View style={{ paddingHorizontal: 16, paddingVertical: 8, alignItems: isUser ? "flex-end" : "flex-start" }}>
-        <View style={{ maxWidth: "86%", backgroundColor: isUser ? UI.primary : UI.card, paddingHorizontal: 12, paddingVertical: 10, borderRadius: 14, borderWidth: isUser ? 0 : 1, borderColor: UI.border }}>
-          <Text style={{ color: isUser ? UI.primaryText : UI.text, fontSize: 15, lineHeight: 20 }}>{item.content}</Text>
+      <View style={{ paddingHorizontal: 16, paddingVertical: 5, alignItems: isUser ? "flex-end" : "flex-start" }}>
+        <View style={{ maxWidth: "85%", backgroundColor: bubbleBg, paddingHorizontal: 14, paddingVertical: 11, borderRadius: UI.radiusLg, borderWidth: isUser ? 0 : 1, borderColor: bubbleBorder }}>
+          <Text style={{ color: isUser ? "#fff" : UI.text, fontSize: 14, lineHeight: 20, letterSpacing: 0.1 }}>{item.content}</Text>
           {item.artifacts?.map((a, i) =>
             a.type === "pdf" ? (
-              <View key={i} style={{ marginTop: 10 }}>
-                <Text style={{ color: isUser ? "#eaf2ff" : UI.text, fontWeight: "900", marginBottom: 8 }}>PDF</Text>
-                <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
-                  <Pressable onPress={() => openPdfArtifact(a).catch((e) => Alert.alert("Open PDF", e?.message ?? String(e)))} disabled={busy}
-                    style={{ backgroundColor: "rgba(255,255,255,0.06)", paddingHorizontal: 12, paddingVertical: 10, borderRadius: 12, borderWidth: 1, borderColor: "rgba(255,255,255,0.10)", opacity: busy ? 0.7 : 1 }}>
-                    <Text style={{ color: isUser ? "#fff" : UI.text, fontWeight: "900" }}>Open</Text>
-                  </Pressable>
-                  <Pressable onPress={() => copyPdfLink(a).then((url) => Alert.alert("Copied", url)).catch((e) => Alert.alert("Copy Link", e?.message ?? String(e)))} disabled={busy}
-                    style={{ backgroundColor: "rgba(255,255,255,0.06)", paddingHorizontal: 12, paddingVertical: 10, borderRadius: 12, borderWidth: 1, borderColor: "rgba(255,255,255,0.10)", opacity: busy ? 0.7 : 1 }}>
-                    <Text style={{ color: isUser ? "#fff" : UI.text, fontWeight: "900" }}>Copy</Text>
-                  </Pressable>
-                  <Pressable onPress={() => sharePdfLink(a).catch((e) => Alert.alert("Share Link", e?.message ?? String(e)))} disabled={busy}
-                    style={{ backgroundColor: "rgba(255,255,255,0.06)", paddingHorizontal: 12, paddingVertical: 10, borderRadius: 12, borderWidth: 1, borderColor: "rgba(255,255,255,0.10)", opacity: busy ? 0.7 : 1 }}>
-                    <Text style={{ color: isUser ? "#fff" : UI.text, fontWeight: "900" }}>Share</Text>
-                  </Pressable>
+              <View key={i} style={{ marginTop: 12, paddingTop: 10, borderTopWidth: 1, borderTopColor: "rgba(255,255,255,0.08)" }}>
+                <Text style={{ color: isUser ? "rgba(255,255,255,0.7)" : UI.subtext, fontWeight: "600", fontSize: 11, letterSpacing: 0.5, marginBottom: 8 }}>PDF DOCUMENT</Text>
+                <View style={{ flexDirection: "row", gap: 6, flexWrap: "wrap" }}>
+                  {[{ label: "Open", fn: () => openPdfArtifact(a) }, { label: "Copy", fn: () => copyPdfLink(a) }, { label: "Share", fn: () => sharePdfLink(a) }].map((act) => (
+                    <Pressable key={act.label} onPress={() => act.fn().catch((e: any) => Alert.alert(act.label, e?.message ?? String(e)))} disabled={busy}
+                      style={{ backgroundColor: "rgba(255,255,255,0.06)", paddingHorizontal: 12, paddingVertical: 7, borderRadius: UI.radiusSm, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)", opacity: busy ? 0.5 : 1 }}>
+                      <Text style={{ color: isUser ? "#fff" : UI.text, fontWeight: "600", fontSize: 12 }}>{act.label}</Text>
+                    </Pressable>
+                  ))}
                 </View>
               </View>
             ) : null
@@ -1040,9 +1050,9 @@ export default function ChatScreen() {
     const isActive = activePatient?.patient_id === item.patient_id;
     return (
       <Pressable onPress={() => selectPatient(item)} disabled={busy}
-        style={{ backgroundColor: isActive ? "rgba(22,163,74,0.18)" : UI.card, borderWidth: 1, borderColor: isActive ? "rgba(22,163,74,0.35)" : UI.border, padding: 12, marginHorizontal: 12, marginTop: 10, borderRadius: 14, opacity: busy ? 0.7 : 1 }}>
-        <Text style={{ color: UI.text, fontSize: 14, fontWeight: "900" }} numberOfLines={1}>{item.full_name || item.patient_id}</Text>
-        <Text style={{ color: UI.subtext, fontSize: 12, marginTop: 4 }}>ID: {item.patient_id}{item.dob ? `  •  DOB: ${item.dob}` : ""}</Text>
+        style={{ backgroundColor: isActive ? UI.successBg : UI.card, borderWidth: 1, borderColor: isActive ? "rgba(63,185,80,0.30)" : UI.border, padding: 12, marginHorizontal: 12, marginTop: 8, borderRadius: UI.radius, opacity: busy ? 0.5 : 1 }}>
+        <Text style={{ color: UI.text, fontSize: 13, fontWeight: "600" }} numberOfLines={1}>{item.full_name || item.patient_id}</Text>
+        <Text style={{ color: UI.muted, fontSize: 11, marginTop: 3, letterSpacing: 0.2 }}>ID: {item.patient_id}{item.dob ? `  ·  DOB: ${item.dob}` : ""}</Text>
       </Pressable>
     );
   }
@@ -1050,42 +1060,43 @@ export default function ChatScreen() {
   function PatientPanel() {
     return (
       <View style={{ flex: 1, backgroundColor: UI.panelBg }}>
-        <View style={{ padding: 12, borderBottomWidth: 1, borderBottomColor: UI.border }}>
-          <Text style={{ color: UI.subtext, fontSize: 12, fontWeight: "800" }}>Active</Text>
-          <Text style={{ color: UI.text, fontWeight: "900", marginTop: 6, fontSize: 14 }} numberOfLines={1}>{activePatient ? activePatient.display_label : "None"}</Text>
+        <View style={{ padding: 14, borderBottomWidth: 1, borderBottomColor: UI.border }}>
+          <Text style={{ color: UI.muted, fontSize: 10, fontWeight: "600", letterSpacing: 1, textTransform: "uppercase" }}>Active Patient</Text>
+          <Text style={{ color: UI.text, fontWeight: "600", marginTop: 5, fontSize: 14 }} numberOfLines={1}>{activePatient ? activePatient.display_label : "None"}</Text>
           {!!backgroundPreview && (
-            <View style={{ marginTop: 10, backgroundColor: UI.card, padding: 10, borderRadius: 12, borderWidth: 1, borderColor: UI.border }}>
-              <Text style={{ color: UI.subtext, fontSize: 12, lineHeight: 18 }}>{backgroundPreview}</Text>
+            <View style={{ marginTop: 10, backgroundColor: UI.surface, padding: 10, borderRadius: UI.radiusSm, borderWidth: 1, borderColor: UI.border }}>
+              <Text style={{ color: UI.subtext, fontSize: 11, lineHeight: 17, fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace" }}>{backgroundPreview}</Text>
             </View>
           )}
         </View>
-        <View style={{ padding: 12, borderBottomWidth: 1, borderBottomColor: UI.border }}>
+        <View style={{ padding: 14, borderBottomWidth: 1, borderBottomColor: UI.border }}>
           <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
-            <TextInput value={searchQuery} onChangeText={setSearchQuery} placeholder="Search name, ID, DOB…" placeholderTextColor={UI.subtext}
-              style={{ flex: 1, color: UI.text, paddingHorizontal: 12, paddingVertical: 10, borderRadius: 12, borderWidth: 1, borderColor: UI.border, backgroundColor: UI.bg }}
+            <TextInput value={searchQuery} onChangeText={setSearchQuery} placeholder="Search name, ID, DOB..." placeholderTextColor={UI.muted}
+              style={{ flex: 1, color: UI.text, fontSize: 13, paddingHorizontal: 12, paddingVertical: 10, borderRadius: UI.radiusSm, borderWidth: 1, borderColor: UI.border, backgroundColor: UI.bg }}
               editable={!busy} autoFocus autoCorrect={false} autoCapitalize="none" returnKeyType="search" clearButtonMode="while-editing" onSubmitEditing={searchPatientsClinicOnly} />
             <Pressable onPress={searchPatientsClinicOnly} disabled={busy}
-              style={{ paddingHorizontal: 14, paddingVertical: 10, borderRadius: 12, backgroundColor: UI.primary, opacity: busy ? 0.7 : 1 }}>
-              <Text style={{ color: "#fff", fontWeight: "900" }}>Search</Text>
+              style={{ paddingHorizontal: 14, paddingVertical: 10, borderRadius: UI.radiusSm, backgroundColor: UI.primaryDark, opacity: busy ? 0.5 : 1 }}>
+              <Text style={{ color: "#fff", fontWeight: "600", fontSize: 13 }}>Search</Text>
             </Pressable>
           </View>
-          <View style={{ flexDirection: "row", gap: 10, marginTop: 10, flexWrap: "wrap" }}>
-            <Pressable onPress={testClinicApi} disabled={busy} style={{ paddingHorizontal: 12, paddingVertical: 10, borderRadius: 12, backgroundColor: UI.btn, borderWidth: 1, borderColor: UI.border, opacity: busy ? 0.7 : 1 }}>
-              <Text style={{ color: UI.btnText, fontWeight: "900" }}>Test API</Text>
-            </Pressable>
-            <Pressable onPress={clearPatientSearch} disabled={busy} style={{ paddingHorizontal: 12, paddingVertical: 10, borderRadius: 12, backgroundColor: UI.btn, borderWidth: 1, borderColor: UI.border, opacity: busy ? 0.7 : 1 }}>
-              <Text style={{ color: UI.btnText, fontWeight: "900" }}>Clear</Text>
-            </Pressable>
-            <Pressable onPress={() => setPatientPanelOpen(false)} disabled={busy} style={{ paddingHorizontal: 12, paddingVertical: 10, borderRadius: 12, backgroundColor: UI.btn, borderWidth: 1, borderColor: UI.border, opacity: busy ? 0.7 : 1 }}>
-              <Text style={{ color: UI.btnText, fontWeight: "900" }}>Close</Text>
-            </Pressable>
+          <View style={{ flexDirection: "row", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+            {[
+              { label: "Test API", fn: testClinicApi },
+              { label: "Clear", fn: clearPatientSearch },
+              { label: "Close", fn: () => setPatientPanelOpen(false) },
+            ].map((btn) => (
+              <Pressable key={btn.label} onPress={btn.fn} disabled={busy}
+                style={{ paddingHorizontal: 11, paddingVertical: 8, borderRadius: UI.radiusSm, backgroundColor: UI.btn, borderWidth: 1, borderColor: UI.border, opacity: busy ? 0.5 : 1 }}>
+                <Text style={{ color: UI.btnText, fontWeight: "500", fontSize: 12 }}>{btn.label}</Text>
+              </Pressable>
+            ))}
           </View>
-          {!!searchStatus && <Text style={{ color: UI.subtext, marginTop: 10, fontSize: 12 }}>{searchStatus}</Text>}
-          {!!lastError && <Text style={{ color: UI.danger, marginTop: 10, fontSize: 12 }} numberOfLines={3}>{lastError}</Text>}
+          {!!searchStatus && <Text style={{ color: UI.subtext, marginTop: 10, fontSize: 11 }}>{searchStatus}</Text>}
+          {!!lastError && <Text style={{ color: UI.danger, marginTop: 10, fontSize: 11 }} numberOfLines={3}>{lastError}</Text>}
         </View>
         <FlatList data={searchResults} keyExtractor={(p) => String(p.patient_id)} renderItem={({ item }) => <PatientRow item={item} />}
           keyboardShouldPersistTaps="always" keyboardDismissMode="on-drag"
-          ListEmptyComponent={<Text style={{ color: UI.subtext, textAlign: "center", padding: 20 }}>{searchQuery.trim() ? "No matches found." : "Search the clinic DB to begin."}</Text>}
+          ListEmptyComponent={<Text style={{ color: UI.muted, textAlign: "center", padding: 24, fontSize: 12, letterSpacing: 0.2 }}>{searchQuery.trim() ? "No matches found." : "Search the clinic database to begin."}</Text>}
           contentContainerStyle={{ paddingBottom: 24 }} />
       </View>
     );
@@ -1104,8 +1115,8 @@ export default function ChatScreen() {
           <Pressable onPress={() => setPatientPanelOpen(false)} style={{ flex: 1 }} />
           <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined}
             style={{ width: drawerWidth, height: "100%", backgroundColor: UI.panelBg, borderLeftWidth: 1, borderLeftColor: UI.border }}>
-            <View style={{ padding: 14, borderBottomWidth: 1, borderBottomColor: UI.border, backgroundColor: "rgba(15,23,42,0.85)" }}>
-              <Text style={{ color: UI.text, fontWeight: "900", fontSize: 14 }}>Patient Search</Text>
+            <View style={{ padding: 14, borderBottomWidth: 1, borderBottomColor: UI.border, backgroundColor: UI.glass }}>
+              <Text style={{ color: UI.muted, fontSize: 10, fontWeight: "600", letterSpacing: 1, textTransform: "uppercase" }}>Patient Search</Text>
             </View>
             <PatientPanel />
           </KeyboardAvoidingView>
@@ -1116,36 +1127,36 @@ export default function ChatScreen() {
         {/* Message list */}
         <FlatList ref={listRef} style={{ flex: 1 }} data={messages} inverted keyExtractor={(m) => m.id}
           renderItem={({ item }) => <Bubble item={item} />} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag"
-          removeClippedSubviews={false} contentContainerStyle={{ paddingTop: 12, paddingBottom: 12 }} />
+          removeClippedSubviews={false} contentContainerStyle={{ paddingTop: 8, paddingBottom: 8 }} />
 
         {/* Bottom control panel */}
-        <View style={{ padding: 12, paddingBottom: Math.max(12, insets.bottom + 12), borderTopWidth: 1, borderTopColor: UI.border, backgroundColor: UI.bg }}>
+        <View style={{ paddingHorizontal: 12, paddingTop: 10, paddingBottom: Math.max(10, insets.bottom + 10), borderTopWidth: 1, borderTopColor: UI.border, backgroundColor: UI.surface }}>
 
           {/* Active Patient Bar */}
-          <View style={{ backgroundColor: UI.card, borderWidth: 1, borderColor: UI.border, borderRadius: 16, padding: 12, gap: 10 }}>
+          <View style={{ backgroundColor: UI.card, borderWidth: 1, borderColor: UI.border, borderRadius: UI.radiusLg, padding: 12, gap: 10 }}>
             <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
               <View style={{ flex: 1 }}>
-                <Text style={{ color: UI.subtext, fontSize: 12, fontWeight: "800" }}>Active Patient</Text>
-                <Text style={{ color: activePatient ? UI.text : UI.danger, fontSize: 14, fontWeight: "900", marginTop: 4 }} numberOfLines={1}>
+                <Text style={{ color: UI.muted, fontSize: 10, fontWeight: "600", letterSpacing: 1, textTransform: "uppercase" }}>Patient</Text>
+                <Text style={{ color: activePatient ? UI.text : UI.muted, fontSize: 14, fontWeight: "600", marginTop: 3 }} numberOfLines={1}>
                   {activePatient ? activePatient.display_label : "None selected"}
                 </Text>
               </View>
-              <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
-                <Chip label={patientBackgroundRaw ? "Context" : "No ctx"} tone={patientBackgroundRaw ? "success" : "neutral"} compact />
+              <View style={{ flexDirection: "row", gap: 6, alignItems: "center" }}>
+                <Chip label={patientBackgroundRaw ? "Ready" : "No data"} tone={patientBackgroundRaw ? "success" : "neutral"} compact />
                 <Pressable onPress={() => setPatientBarCollapsed((v) => !v)} disabled={busy}
-                  style={{ paddingHorizontal: 12, paddingVertical: 10, borderRadius: 12, backgroundColor: UI.btn, borderWidth: 1, borderColor: UI.border, opacity: busy ? 0.7 : 1 }}>
-                  <Text style={{ color: UI.btnText, fontWeight: "900", fontSize: 12 }}>{patientBarCollapsed ? "Show" : "Hide"}</Text>
+                  style={{ paddingHorizontal: 10, paddingVertical: 7, borderRadius: UI.radiusSm, backgroundColor: UI.btn, borderWidth: 1, borderColor: UI.border, opacity: busy ? 0.5 : 1 }}>
+                  <Text style={{ color: UI.btnText, fontWeight: "500", fontSize: 11 }}>{patientBarCollapsed ? "Expand" : "Collapse"}</Text>
                 </Pressable>
               </View>
             </View>
 
             {!patientBarCollapsed ? (
               <>
-                {lastError ? <Text style={{ color: UI.danger, fontSize: 12, marginTop: 2 }} numberOfLines={2}>{lastError}</Text> : null}
+                {lastError ? <Text style={{ color: UI.danger, fontSize: 11, marginTop: 2 }} numberOfLines={2}>{lastError}</Text> : null}
 
-                {/* ✅ Letter Type Selector */}
+                {/* Letter Type Selector */}
                 <View>
-                  <Text style={{ color: UI.subtext, fontSize: 11, fontWeight: "800", marginBottom: 6 }}>LETTER TYPE</Text>
+                  <Text style={{ color: UI.muted, fontSize: 10, fontWeight: "600", letterSpacing: 1, marginBottom: 5 }}>LETTER TYPE</Text>
                   <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
                     {LETTER_TYPES.map((lt) => letterTypePill(lt))}
                   </View>
@@ -1154,7 +1165,7 @@ export default function ChatScreen() {
                 {/* ✅ Provider Selector */}
                 {providers.length > 0 ? (
                   <View>
-                    <Text style={{ color: UI.subtext, fontSize: 11, fontWeight: "800", marginBottom: 6 }}>PROVIDER</Text>
+                    <Text style={{ color: UI.muted, fontSize: 10, fontWeight: "600", letterSpacing: 1, marginBottom: 5 }}>PROVIDER</Text>
                     <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexDirection: "row" }}>
                       <View style={{ flexDirection: "row", gap: 8 }}>
                         {providers.map((prov) => {
@@ -1168,13 +1179,13 @@ export default function ChatScreen() {
                               }}
                               disabled={busy}
                               style={{
-                                paddingHorizontal: 10, paddingVertical: 8, borderRadius: 999, borderWidth: 1,
-                                borderColor: active ? UI.success : UI.border,
-                                backgroundColor: active ? "rgba(22,163,74,0.25)" : "rgba(148,163,184,0.08)",
-                                opacity: busy ? 0.75 : 1,
+                                paddingHorizontal: 10, paddingVertical: 7, borderRadius: UI.radiusPill, borderWidth: 1,
+                                borderColor: active ? `${UI.success}44` : UI.border,
+                                backgroundColor: active ? UI.successBg : "rgba(139,156,181,0.05)",
+                                opacity: busy ? 0.5 : 1,
                               }}
                             >
-                              <Text style={{ color: active ? UI.text : UI.subtext, fontWeight: "900", fontSize: 12 }}>
+                              <Text style={{ color: active ? UI.success : UI.subtext, fontWeight: active ? "600" : "500", fontSize: 11, letterSpacing: 0.2 }}>
                                 {prov.last_name}, {prov.credentials}
                               </Text>
                             </Pressable>
@@ -1188,7 +1199,7 @@ export default function ChatScreen() {
                 {/* ✅ NEW: Payer/Insurance Selector */}
                 {patientCoverages.length > 0 ? (
                   <View>
-                    <Text style={{ color: UI.subtext, fontSize: 11, fontWeight: "800", marginBottom: 6 }}>INSURANCE / PAYER</Text>
+                    <Text style={{ color: UI.muted, fontSize: 10, fontWeight: "600", letterSpacing: 1, marginBottom: 5 }}>INSURANCE / PAYER</Text>
                     <ScrollView horizontal showsHorizontalScrollIndicator={false}>
                       <View style={{ flexDirection: "row", gap: 8 }}>
                         {patientCoverages.map((cov) => {
@@ -1202,13 +1213,13 @@ export default function ChatScreen() {
                               onPress={() => setSelectedCoverageId(cov.coverage_id)}
                               disabled={busy}
                               style={{
-                                paddingHorizontal: 10, paddingVertical: 8, borderRadius: 999, borderWidth: 1,
-                                borderColor: active ? UI.warn : UI.border,
-                                backgroundColor: active ? "rgba(245,158,11,0.25)" : "rgba(148,163,184,0.08)",
-                                opacity: busy ? 0.75 : 1,
+                                paddingHorizontal: 10, paddingVertical: 7, borderRadius: UI.radiusPill, borderWidth: 1,
+                                borderColor: active ? `${UI.warn}44` : UI.border,
+                                backgroundColor: active ? UI.warnBg : "rgba(139,156,181,0.05)",
+                                opacity: busy ? 0.5 : 1,
                               }}
                             >
-                              <Text style={{ color: active ? UI.text : UI.subtext, fontWeight: "900", fontSize: 11 }} numberOfLines={1}>
+                              <Text style={{ color: active ? UI.warn : UI.subtext, fontWeight: active ? "600" : "500", fontSize: 10, letterSpacing: 0.2 }} numberOfLines={1}>
                                 {label}
                               </Text>
                             </Pressable>
@@ -1222,7 +1233,7 @@ export default function ChatScreen() {
                 {/* ✅ Request Selector (if patient has multiple) */}
                 {patientRequests.length > 0 ? (
                   <View>
-                    <Text style={{ color: UI.subtext, fontSize: 11, fontWeight: "800", marginBottom: 6 }}>PA REQUEST</Text>
+                    <Text style={{ color: UI.muted, fontSize: 10, fontWeight: "600", letterSpacing: 1, marginBottom: 5 }}>PA REQUEST</Text>
                     <ScrollView horizontal showsHorizontalScrollIndicator={false}>
                       <View style={{ flexDirection: "row", gap: 8 }}>
                         {patientRequests.map((req) => {
@@ -1233,13 +1244,13 @@ export default function ChatScreen() {
                               onPress={() => setSelectedRequestId(req.request_id)}
                               disabled={busy}
                               style={{
-                                paddingHorizontal: 10, paddingVertical: 8, borderRadius: 999, borderWidth: 1,
-                                borderColor: active ? UI.info : UI.border,
-                                backgroundColor: active ? "rgba(14,165,233,0.25)" : "rgba(148,163,184,0.08)",
-                                opacity: busy ? 0.75 : 1,
+                                paddingHorizontal: 10, paddingVertical: 7, borderRadius: UI.radiusPill, borderWidth: 1,
+                                borderColor: active ? `${UI.info}44` : UI.border,
+                                backgroundColor: active ? UI.infoBg : "rgba(139,156,181,0.05)",
+                                opacity: busy ? 0.5 : 1,
                               }}
                             >
-                              <Text style={{ color: active ? UI.text : UI.subtext, fontWeight: "900", fontSize: 11 }} numberOfLines={1}>
+                              <Text style={{ color: active ? UI.info : UI.subtext, fontWeight: active ? "600" : "500", fontSize: 10, letterSpacing: 0.2 }} numberOfLines={1}>
                                 {req.cpt_code || "?"} — {(req.service_name || req.cpt_description || req.request_id).slice(0, 30)}
                                 {req.status ? ` (${req.status})` : ""}
                               </Text>
@@ -1252,15 +1263,15 @@ export default function ChatScreen() {
                 ) : null}
 
                 {/* Action Buttons */}
-                <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
+                <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 6, flexWrap: "wrap", marginTop: 2 }}>
                   <Pressable onPress={() => setPatientPanelOpen(true)} disabled={busy}
-                    style={{ paddingHorizontal: 14, paddingVertical: 10, borderRadius: 12, backgroundColor: UI.primary, opacity: busy ? 0.7 : 1, alignItems: "center", minWidth: 90 }}>
-                    <Text style={{ color: "#fff", fontWeight: "900", fontSize: 12 }}>Search</Text>
+                    style={{ paddingHorizontal: 12, paddingVertical: 9, borderRadius: UI.radiusSm, backgroundColor: UI.btn, borderWidth: 1, borderColor: UI.borderLight, opacity: busy ? 0.5 : 1, alignItems: "center", minWidth: 80 }}>
+                    <Text style={{ color: UI.primary, fontWeight: "600", fontSize: 12 }}>Search</Text>
                   </Pressable>
 
                   <Pressable onPress={onGenerateLetter} disabled={busy || !activePatient}
-                    style={{ paddingHorizontal: 14, paddingVertical: 10, borderRadius: 12, backgroundColor: UI.success, opacity: busy || !activePatient ? 0.55 : 1, alignItems: "center", minWidth: 130 }}>
-                    <Text style={{ color: "#fff", fontWeight: "900", fontSize: 12 }}>Generate Letter</Text>
+                    style={{ paddingHorizontal: 14, paddingVertical: 9, borderRadius: UI.radiusSm, backgroundColor: UI.success, opacity: busy || !activePatient ? 0.35 : 1, alignItems: "center", minWidth: 120 }}>
+                    <Text style={{ color: "#fff", fontWeight: "600", fontSize: 12 }}>Generate Letter</Text>
                   </Pressable>
 
                   <Pressable
@@ -1275,18 +1286,18 @@ export default function ChatScreen() {
                     }}
                     disabled={busy}
                     style={{
-                      paddingHorizontal: 14, paddingVertical: 10, borderRadius: 12,
-                      backgroundColor: attachPacket ? UI.success : UI.btn,
-                      borderWidth: attachPacket ? 0 : 1, borderColor: attachPacket ? "transparent" : UI.border,
-                      opacity: busy ? 0.7 : 1, alignItems: "center", minWidth: 90,
+                      paddingHorizontal: 12, paddingVertical: 9, borderRadius: UI.radiusSm,
+                      backgroundColor: attachPacket ? UI.successBg : UI.btn,
+                      borderWidth: 1, borderColor: attachPacket ? `${UI.success}33` : UI.border,
+                      opacity: busy ? 0.5 : 1, alignItems: "center", minWidth: 80,
                     }}
                   >
-                    <Text style={{ color: "#fff", fontWeight: "900", fontSize: 12 }}>{attachPacket ? "Attach ✓" : "Attach"}</Text>
+                    <Text style={{ color: attachPacket ? UI.success : UI.btnText, fontWeight: "600", fontSize: 12 }}>{attachPacket ? "Attached" : "Attach"}</Text>
                   </Pressable>
                 </View>
 
                 {/* Intent pills for free chat */}
-                <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
+                <View style={{ flexDirection: "row", gap: 6, flexWrap: "wrap" }}>
                   {intentPill("generate_preauth_letter", "Letter")}
                   {intentPill("medical_necessity_summary", "Necessity")}
                   {intentPill("criteria_checklist", "Checklist")}
@@ -1297,29 +1308,29 @@ export default function ChatScreen() {
           </View>
 
           {/* Composer row */}
-          <View style={{ flexDirection: "row", gap: 10, marginTop: 10 }}>
+          <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
             <Pressable onPress={onPickFile} disabled={busy}
-              style={{ paddingHorizontal: 14, justifyContent: "center", borderRadius: 14, backgroundColor: UI.btn, borderWidth: 1, borderColor: UI.border, opacity: busy ? 0.7 : 1 }}>
-              <Text style={{ color: UI.btnText, fontWeight: "900" }}>Upload</Text>
+              style={{ paddingHorizontal: 12, justifyContent: "center", borderRadius: UI.radius, backgroundColor: UI.btn, borderWidth: 1, borderColor: UI.border, opacity: busy ? 0.5 : 1 }}>
+              <Text style={{ color: UI.subtext, fontWeight: "500", fontSize: 13 }}>+</Text>
             </Pressable>
 
-            <TextInput value={input} onChangeText={setInput} placeholder="Message…" placeholderTextColor={UI.subtext}
-              style={{ flex: 1, color: UI.text, paddingHorizontal: 14, paddingVertical: 12, borderRadius: 14, borderWidth: 1, borderColor: UI.border, backgroundColor: UI.card2 }}
+            <TextInput value={input} onChangeText={setInput} placeholder="Type a message..." placeholderTextColor={UI.muted}
+              style={{ flex: 1, color: UI.text, fontSize: 13, paddingHorizontal: 14, paddingVertical: 10, borderRadius: UI.radius, borderWidth: 1, borderColor: UI.border, backgroundColor: UI.card2 }}
               editable={!busy} onSubmitEditing={onSend} returnKeyType="send" />
 
             <Pressable onPress={onSend} disabled={busy}
-              style={{ paddingHorizontal: 18, justifyContent: "center", borderRadius: 14, backgroundColor: busy ? "rgba(31,111,235,0.45)" : UI.primary, opacity: busy ? 0.8 : 1 }}>
-              <Text style={{ color: UI.primaryText, fontWeight: "900" }}>{busy ? "…" : "Send"}</Text>
+              style={{ paddingHorizontal: 16, justifyContent: "center", borderRadius: UI.radius, backgroundColor: busy ? `${UI.primaryDark}66` : UI.primaryDark, opacity: busy ? 0.6 : 1 }}>
+              <Text style={{ color: "#fff", fontWeight: "600", fontSize: 13 }}>{busy ? "..." : "Send"}</Text>
             </Pressable>
           </View>
 
           {/* Footer */}
-          <View style={{ marginTop: 10, flexDirection: "row", justifyContent: "space-between" }}>
+          <View style={{ marginTop: 8, flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
             <Pressable onPress={clearActivePatientEverywhere} disabled={busy}
-              style={{ paddingHorizontal: 12, paddingVertical: 10, borderRadius: 12, backgroundColor: UI.btn, borderWidth: 1, borderColor: UI.border, opacity: busy ? 0.7 : 1 }}>
-              <Text style={{ color: UI.btnText, fontWeight: "900", fontSize: 12 }}>Clear Patient</Text>
+              style={{ paddingHorizontal: 10, paddingVertical: 7, borderRadius: UI.radiusSm, backgroundColor: UI.btn, borderWidth: 1, borderColor: UI.border, opacity: busy ? 0.5 : 1 }}>
+              <Text style={{ color: UI.muted, fontWeight: "500", fontSize: 11 }}>Clear Patient</Text>
             </Pressable>
-            <Text style={{ color: UI.subtext, fontSize: 12, marginTop: 10 }}>Attachments: {pickedFiles.length}</Text>
+            <Text style={{ color: UI.muted, fontSize: 10, letterSpacing: 0.3 }}>{pickedFiles.length > 0 ? `${pickedFiles.length} file(s) attached` : ""}</Text>
           </View>
         </View>
       </KeyboardAvoidingView>

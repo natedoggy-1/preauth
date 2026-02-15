@@ -72,8 +72,8 @@ COMMENT ON COLUMN demo.eval_runs.status IS 'One of: running, completed, failed, 
 
 CREATE TABLE IF NOT EXISTS demo.eval_results (
   result_id               VARCHAR(64)    PRIMARY KEY,
-  run_id                  VARCHAR(64)    NOT NULL REFERENCES demo.eval_runs(run_id),
-  test_case_id            VARCHAR(64)    NOT NULL REFERENCES demo.eval_test_cases(test_case_id),
+  run_id                  VARCHAR(64)    NOT NULL REFERENCES demo.eval_runs(run_id) ON DELETE CASCADE,
+  test_case_id            VARCHAR(64)    NOT NULL REFERENCES demo.eval_test_cases(test_case_id) ON DELETE CASCADE,
   generated_output        TEXT           NOT NULL,
   generation_time_ms      INTEGER,
 
@@ -84,13 +84,13 @@ CREATE TABLE IF NOT EXISTS demo.eval_results (
   retrieved_chunks        JSONB,
 
   -- Quality scores (0.0 - 1.0)
-  criteria_coverage_score REAL,
-  clinical_accuracy_score REAL,
-  format_compliance_score REAL,
-  completeness_score      REAL,
+  criteria_coverage_score REAL CHECK (criteria_coverage_score >= 0.0 AND criteria_coverage_score <= 1.0),
+  clinical_accuracy_score REAL CHECK (clinical_accuracy_score >= 0.0 AND clinical_accuracy_score <= 1.0),
+  format_compliance_score REAL CHECK (format_compliance_score >= 0.0 AND format_compliance_score <= 1.0),
+  completeness_score      REAL CHECK (completeness_score >= 0.0 AND completeness_score <= 1.0),
 
   -- LLM-as-judge evaluation
-  llm_judge_score         REAL,
+  llm_judge_score         REAL CHECK (llm_judge_score >= 0.0 AND llm_judge_score <= 1.0),
   llm_judge_reasoning     TEXT,
   llm_judge_model         VARCHAR(64),
 
@@ -185,6 +185,9 @@ CREATE INDEX IF NOT EXISTS idx_eval_results_run_id
 
 CREATE INDEX IF NOT EXISTS idx_eval_results_test_case_id
   ON demo.eval_results (test_case_id);
+
+CREATE INDEX IF NOT EXISTS idx_eval_results_run_created
+  ON demo.eval_results (run_id, created_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_eval_feedback_letter_id
   ON demo.eval_feedback (letter_id)
