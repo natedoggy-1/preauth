@@ -23,8 +23,12 @@
 
 BEGIN;
 
--- Create the demo schema if it doesn't exist
-CREATE SCHEMA IF NOT EXISTS demo;
+-- Drop the old schema so we start completely fresh
+-- (IF NOT EXISTS won't fix column-type mismatches from prior runs)
+DROP SCHEMA IF EXISTS demo CASCADE;
+
+-- Create the demo schema
+CREATE SCHEMA demo;
 
 -- ============================================================================
 -- BASE CLINICAL TABLES
