@@ -140,7 +140,8 @@ app.post("/api/patients/search", requireToken, async (req, res) => {
       (p.first_name || ' ' || p.last_name) AS full_name,
       p.first_name, p.last_name,
       to_char(p.dob,'YYYY-MM-DD') AS dob,
-      p.sex, p.phone, p.address,
+      p.sex, p.phone,
+      COALESCE(p.address_line1,'') || CASE WHEN p.address_line2 IS NOT NULL AND p.address_line2 <> '' THEN ', ' || p.address_line2 ELSE '' END || CASE WHEN p.city IS NOT NULL THEN ', ' || p.city ELSE '' END || CASE WHEN p.state IS NOT NULL THEN ', ' || p.state ELSE '' END || CASE WHEN p.zip IS NOT NULL THEN ' ' || p.zip ELSE '' END AS address,
       c.member_id AS insurance_member_id,
       c.group_id  AS insurance_group_number
     FROM ${S}.patients p
@@ -183,7 +184,8 @@ app.post("/api/patients/background", requireToken, async (req, res) => {
     const pRes = await pool.query(
       `SELECT tenant_id, facility_id, patient_id, first_name, last_name,
               (first_name || ' ' || last_name) AS full_name,
-              to_char(dob,'YYYY-MM-DD') AS dob, sex, phone, address
+              to_char(dob,'YYYY-MM-DD') AS dob, sex, phone,
+              COALESCE(address_line1,'') || CASE WHEN address_line2 IS NOT NULL AND address_line2 <> '' THEN ', ' || address_line2 ELSE '' END || CASE WHEN city IS NOT NULL THEN ', ' || city ELSE '' END || CASE WHEN state IS NOT NULL THEN ', ' || state ELSE '' END || CASE WHEN zip IS NOT NULL THEN ' ' || zip ELSE '' END AS address
        FROM ${S}.patients WHERE tenant_id=$1 AND facility_id=$2 AND patient_id=$3 LIMIT 1;`,
       [tenant_id, facility_id, patient_id]
     );
