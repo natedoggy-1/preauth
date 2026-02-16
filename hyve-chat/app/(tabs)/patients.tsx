@@ -17,7 +17,7 @@ import {
   Config as ApiConfig,
   clinicPatientsSearch,
   clinicPatientBackground,
-  sendNonPHICase,
+  chatNonPhiCase,
 } from "../lib/api";
 
 import { toNonPHICasePacket } from "../lib/phiScrubber";
@@ -294,7 +294,7 @@ async function openPatientAndLoadBackground(p: PatientPHI) {
       });
 
       assertNoPHI(packet);
-      await sendNonPHICase(cfg, packet);
+      await chatNonPhiCase(cfg, packet);
 
       notify("Sent ✅", "Non-PHI packet sent to n8n (PHI stayed local).");
     } catch (e: any) {

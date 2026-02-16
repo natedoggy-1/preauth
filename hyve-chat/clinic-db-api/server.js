@@ -193,8 +193,10 @@ app.post("/api/patients/background", requireToken, async (req, res) => {
     if (!p) return res.status(404).json({ ok: false, error: "Not found" });
 
     const cAllRes = await pool.query(
-      `SELECT coverage_id, payer_name, payer_key, plan_name, member_id, group_id, payer_id
-       FROM ${S}.coverage WHERE tenant_id=$1 AND facility_id=$2 AND patient_id=$3 ORDER BY coverage_id ASC;`,
+      `SELECT c.coverage_id, py.payer_name, c.payer_key, c.plan_name, c.member_id, c.group_id, c.payer_id
+       FROM ${S}.coverage c
+       LEFT JOIN ${S}.payers py ON py.tenant_id=c.tenant_id AND py.facility_id=c.facility_id AND py.payer_id=c.payer_id
+       WHERE c.tenant_id=$1 AND c.facility_id=$2 AND c.patient_id=$3 ORDER BY c.coverage_id ASC;`,
       [tenant_id, facility_id, patient_id]
     );
     const coverage_all = cAllRes.rows || [];
@@ -202,8 +204,9 @@ app.post("/api/patients/background", requireToken, async (req, res) => {
 
     const rRes = await pool.query(
       `SELECT request_id, coverage_id, to_char(requested_dos,'YYYY-MM-DD') AS requested_dos,
-              cpt_code, cpt_description, icd10_code, icd10_description, clinical_question,
-              requested_units, service_name, service_key, priority, payer_id, provider_id, status
+              cpt_code, cpt_description, icd10_code, icd10_codes, clinical_question,
+              requested_units, service_name, service_key, priority, payer_id, provider_id, status,
+              medical_necessity_summary
        FROM ${S}.preauth_requests WHERE tenant_id=$1 AND facility_id=$2 AND patient_id=$3
        ORDER BY requested_dos DESC NULLS LAST, request_id DESC LIMIT 25;`,
       [tenant_id, facility_id, patient_id]
@@ -238,9 +241,9 @@ app.post("/api/patients/background", requireToken, async (req, res) => {
     );
 
     const mRes = await pool.query(
-      `SELECT trial_id, medication, dose, to_char(start_date,'YYYY-MM-DD') AS start_date,
+      `SELECT med_trial_id AS trial_id, medication, dose, to_char(start_date,'YYYY-MM-DD') AS start_date,
               to_char(end_date,'YYYY-MM-DD') AS end_date, outcome
-       FROM ${S}.med_trials WHERE tenant_id=$1 AND facility_id=$2 AND patient_id=$3 ORDER BY trial_id DESC;`,
+       FROM ${S}.med_trials WHERE tenant_id=$1 AND facility_id=$2 AND patient_id=$3 ORDER BY med_trial_id DESC;`,
       [tenant_id, facility_id, patient_id]
     );
 
@@ -659,7 +662,7 @@ app.post("/api/letters/generate-context", requireToken, async (req, res) => {
               cpt_code: request.cpt_code,
               cpt_description: request.cpt_description,
               icd10_code: request.icd10_code,
-              icd10_description: request.icd10_description,
+              icd10_description: request.medical_necessity_summary || null,
               icd10_codes: request.icd10_codes,
               service_name: request.service_name,
               service_key: request.service_key,
