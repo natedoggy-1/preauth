@@ -1,0 +1,59 @@
+UnitedHealthcare Medical Policy: Lumbar Spinal Fusion
+Policy Number: 2023T0547 | Effective Date: January 1, 2024
+
+POLICY SUMMARY
+UnitedHealthcare considers lumbar spinal fusion medically necessary for patients with
+documented structural spinal pathology who have failed adequate conservative management
+and meet specific clinical and psychosocial criteria.
+
+CLINICAL CRITERIA — ALL of the following are required:
+
+1. ADVANCED IMAGING
+   MRI (preferred) or CT demonstrating structural pathology including but not limited
+   to disc herniation, spinal stenosis, spondylolisthesis, or segmental instability.
+   Findings must correlate with clinical presentation.
+
+2. NON-OPERATIVE TREATMENT
+   At least 3 months (12 weeks) of non-operative treatment including supervised
+   physical therapy with documented attendance and functional progress measures.
+
+3. NEUROLOGICAL OR FUNCTIONAL CRITERIA
+   Progressive neurological deficit (motor weakness, bowel/bladder dysfunction), OR
+   functionally disabling symptoms that impair activities of daily living despite
+   conservative management.
+
+4. INTERVENTIONAL PROCEDURE FAILURE
+   Failure of at least one interventional pain procedure:
+   - Epidural steroid injection (ESI)
+   - Selective nerve root block
+   - Facet joint injection
+   Documented response required for each procedure.
+
+5. MEDICAL OPTIMIZATION
+   Patient is medically optimized for surgery:
+   - HbA1c < 8.0% if diabetic (within 90 days)
+   - Nutritional status adequate
+   - Comorbidities managed
+
+6. PSYCHOSOCIAL SCREENING
+   Psychosocial screening completed using a validated instrument (PHQ-9 or equivalent).
+   No untreated psychiatric conditions that would impair surgical outcome.
+
+7. SURGICAL PLAN LIMITS
+   Surgical plan includes no more than 3 motion segments (3 interbody levels).
+   Plans exceeding 3 levels require additional peer-to-peer review.
+
+REQUIRED DOCUMENTATION:
+- MRI or CT report (within 12 months)
+- Physical therapy records with functional outcome measures
+- Interventional procedure notes with response data
+- HbA1c lab results (if diabetic)
+- PHQ-9 or psychosocial screening results
+- Surgical plan with proposed levels
+
+APPLICABLE CPT CODES:
+22612, 22630, 22633, 22853, 63047, 63048
+
+APPEAL DEADLINE: 60 calendar days from denial notification
+
+GUIDELINE SOURCES: UHC Medical Policy 2023T0547, MCG Guidelines

@@ -1,0 +1,46 @@
+Humana Medical Coverage Policy: Epidural Steroid Injection (ESI)
+Effective Date: January 1, 2024
+
+POLICY SUMMARY
+Humana considers epidural steroid injection medically necessary for patients with
+documented radiculopathy or spinal stenosis who have failed adequate conservative
+management and have imaging correlation.
+
+CLINICAL CRITERIA — ALL of the following must be met:
+
+1. DIAGNOSIS WITH IMAGING CORRELATION
+   Documented radiculopathy or spinal stenosis confirmed by:
+   - Clinical examination findings (dermatomal pain, neurological deficits)
+   - MRI or CT demonstrating structural pathology correlating with symptoms
+
+2. CONSERVATIVE MANAGEMENT
+   At least 6 weeks of conservative management including:
+   - Physical therapy (structured program)
+   - Oral analgesics (NSAIDs, neuropathic agents, or muscle relaxants)
+
+3. INJECTION FREQUENCY LIMITS
+   Maximum 3 injections per spinal region per rolling 12-month period.
+   Spinal regions counted separately: cervical, thoracic, lumbar.
+
+4. IMAGE GUIDANCE REQUIREMENT
+   Fluoroscopic or CT guidance required for all spinal injection procedures.
+   Blind (non-image-guided) injections are not covered.
+
+5. REPEAT INJECTION CRITERIA
+   For repeat injections in the same region:
+   - Prior injection must have provided >= 50% pain relief
+   - Relief must have lasted >= 2 weeks
+   - Documented functional improvement from prior injection
+
+REQUIRED DOCUMENTATION:
+- MRI or CT report correlating with symptoms
+- Physical therapy records
+- Medication history with trial outcomes
+- Prior injection records (if repeat injection)
+
+APPLICABLE CPT CODES:
+62321, 62322, 62323, 64483, 64484
+
+APPEAL DEADLINE: 45 calendar days from denial notification
+
+GUIDELINE SOURCE: Humana Medical Coverage Policy

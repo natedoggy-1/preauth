@@ -1,0 +1,95 @@
+LETTER TEMPLATE: Initial Prior Authorization — Spinal Cord Stimulator Implantation
+Template ID: TMPL-IA-SCS-001
+Service Category: pain_management
+Letter Type: initial_auth
+
+INSTRUCTIONS:
+Generate a prior authorization letter for spinal cord stimulator permanent implantation.
+Must include psychological evaluation results, SCS trial outcomes (>= 50% relief), and
+comprehensive multimodal treatment failure documentation. This is a high-complexity
+authorization requiring extensive documentation.
+
+TEMPLATE STRUCTURE:
+
+[Today's Date]
+
+[Payer Name]
+Attn: Medical Director
+[Payer Address]
+
+RE: Prior Authorization Request — Spinal Cord Stimulator Implantation
+Patient: [Patient Full Name]
+Date of Birth: [DOB]
+Member ID: [Member ID]
+
+Dear Medical Director,
+
+I am requesting prior authorization for permanent spinal cord stimulator (SCS)
+implantation (CPT [CPT Codes]) for [Patient Name], who has been diagnosed with
+chronic intractable pain secondary to [Primary Diagnosis].
+
+CHRONIC PAIN HISTORY
+[Duration of chronic pain condition. Etiology and pathophysiology. Prior surgical
+history if applicable (e.g., failed back surgery syndrome — procedure type, date,
+facility, surgeon). Progression of symptoms over time. Current pain levels (VAS/NRS).
+Impact on activities of daily living, employment, sleep, and psychosocial functioning.]
+
+MULTIMODAL TREATMENT HISTORY
+[Comprehensive list of ALL treatments attempted, organized by modality:
+
+Physical Therapy:
+- Program dates, number of visits, specific protocols used
+- Functional outcomes and reason for discontinuation
+
+Pharmacotherapy:
+- Each medication: name, dose, duration, response, side effects
+- Include NSAIDs, neuropathic agents, muscle relaxants, opioids, topicals
+- Document rational for medication changes
+
+Interventional Procedures:
+- Each procedure: type, date, approach, response (% relief, duration)
+- Include ESIs, nerve blocks, facet injections, medial branch blocks, RFA
+- Document diminishing returns or failure patterns
+
+Behavioral/Psychological Interventions:
+- Cognitive behavioral therapy, biofeedback, pain psychology
+- Dates, duration, outcomes]
+
+PSYCHOLOGICAL EVALUATION
+[Evaluator name, credentials, and date of evaluation. Key findings:
+- Cognitive functioning
+- Mood assessment (depression, anxiety screening results)
+- Coping mechanisms and pain catastrophizing scores
+- Substance abuse screening results
+- Recommendation regarding SCS candidacy
+- Confirmation of no untreated psychiatric contraindications
+- Realistic expectations assessment]
+
+SCS TRIAL RESULTS
+[Trial dates (start to end, minimum 5-7 days). Device manufacturer and model.
+Lead placement (spinal level, electrode configuration). Daily pain logs showing:
+- Pre-trial baseline pain level
+- Daily pain levels during trial
+- Percent pain relief achieved (must be >= 50%)
+Functional improvement metrics:
+- Walking distance/tolerance
+- Sitting tolerance
+- Sleep quality
+- Activity participation
+Patient satisfaction assessment.
+Any adverse events during trial.]
+
+MEDICAL NECESSITY
+[Point-by-point alignment with payer policy criteria. Clinical rationale for
+permanent implantation based on successful trial. Expected long-term outcomes.
+References to clinical guidelines (NACC, APS) and published literature supporting
+SCS for this indication. Why the patient is not a candidate for further corrective
+surgery.]
+
+Sincerely,
+
+[Provider Signature]
+[Provider Name], [Credentials]
+[Facility Name]
+NPI: [Provider NPI]
+[Facility Phone] | Fax: [Facility Fax]

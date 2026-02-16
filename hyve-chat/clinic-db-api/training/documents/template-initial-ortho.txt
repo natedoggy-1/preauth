@@ -1,0 +1,79 @@
+LETTER TEMPLATE: Initial Prior Authorization — Orthopedic Surgery (Joint Replacement)
+Template ID: TMPL-IA-ORTHO-001
+Service Category: orthopedic_surgery
+Letter Type: initial_auth
+
+INSTRUCTIONS:
+Generate a prior authorization letter for total joint arthroplasty. Include radiographic
+grading (Kellgren-Lawrence), functional scores (WOMAC/KOOS), and align each policy
+criterion with patient evidence. Use formal medical tone.
+
+TEMPLATE STRUCTURE:
+
+[Today's Date]
+
+[Payer Name]
+Attn: Prior Authorization Department
+[Payer Address]
+
+RE: Prior Authorization Request — Total Joint Arthroplasty
+Patient: [Patient Full Name]
+Date of Birth: [DOB]
+Member ID: [Member ID]
+Group Number: [Group ID]
+Plan: [Plan Name]
+
+Dear Medical Director,
+
+I am writing to request prior authorization for total joint arthroplasty
+(CPT [CPT Codes]) for the above-referenced patient. As the treating orthopedic
+surgeon, I have determined this procedure to be medically necessary based on the
+following clinical evidence.
+
+CLINICAL HISTORY
+[Patient demographics, presenting complaint, duration of symptoms, impact on
+activities of daily living. Include relevant medical history and comorbidities
+such as diabetes status (HbA1c), BMI, cardiac history.]
+
+RADIOGRAPHIC FINDINGS
+[Detail weight-bearing radiograph results:
+- Kellgren-Lawrence grading (Grade 1-4)
+- Joint space narrowing (medial/lateral compartments)
+- Osteophyte formation
+- Subchondral sclerosis and cyst formation
+- Alignment (varus/valgus deformity in degrees)
+Reference the imaging date and modality.]
+
+CONSERVATIVE TREATMENT HISTORY
+[Physical therapy: number of visits, dates, specific exercises, functional outcomes
+Medication trials: each drug with dose, duration, and response
+Injection therapy: corticosteroid and/or viscosupplementation with dates and response
+Activity modification and assistive devices used]
+
+FUNCTIONAL ASSESSMENT
+[Validated outcome scores:
+- WOMAC (Western Ontario and McMaster Universities Osteoarthritis Index)
+  Total score and subscales: pain, stiffness, physical function
+- KOOS (Knee Injury and Osteoarthritis Outcome Score) if available
+- Description of specific ADL limitations: stairs, walking distance, standing tolerance
+- Use of assistive devices (cane, walker)]
+
+MEDICAL NECESSITY
+[Point-by-point alignment with payer policy criteria. Address each criterion
+individually with specific patient evidence. Include why surgical intervention is
+the appropriate next step given failure of all conservative measures.]
+
+CONCLUSION
+Based on the clinical evidence presented, total joint arthroplasty is the appropriate
+next step in treatment. The patient has exhausted conservative options and continues
+to experience significant functional decline. I respectfully request authorization
+for this medically necessary procedure.
+
+Please contact our office at [Phone] or fax [Fax] with any questions.
+
+Sincerely,
+
+[Provider Signature]
+[Provider Name], [Credentials]
+NPI: [Provider NPI]
+[Facility Name]
