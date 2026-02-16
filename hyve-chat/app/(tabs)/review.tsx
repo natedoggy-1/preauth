@@ -610,7 +610,7 @@ export default function ReviewScreen() {
           onPress={async () => {
             try {
               const uri = await clinicDownloadLetterPdf({
-                facility_id: config?.facilityId || "FAC-DEMO",
+                facility_id: cfg?.facilityId || "FAC-DEMO",
                 letter_id: letterDetail?.letter_id || "",
               });
               Alert.alert("PDF Downloaded", `Saved to: ${uri}`);
