@@ -1,0 +1,65 @@
+Cigna Medical Coverage Policy: Spinal Cord Stimulator (SCS) Implantation
+Policy Number: 0112 | Effective Date: January 1, 2024
+
+POLICY SUMMARY
+Cigna considers spinal cord stimulator implantation medically necessary for patients
+with chronic intractable pain who have failed comprehensive multimodal conservative
+treatment and demonstrated successful response during an SCS trial period.
+
+CLINICAL CRITERIA — ALL of the following must be met:
+
+1. QUALIFYING DIAGNOSIS
+   Chronic intractable pain secondary to one of the following:
+   - Failed back surgery syndrome (postlaminectomy syndrome, M96.1)
+   - Complex regional pain syndrome (CRPS, G90.5x)
+   - Chronic painful peripheral neuropathy
+   Pain must be primarily neuropathic in character.
+
+2. PAIN DURATION
+   Pain duration >= 6 months with documented failure of multimodal conservative care
+   including physical therapy, pharmacotherapy, psychological interventions, and
+   interventional procedures.
+
+3. PSYCHOLOGICAL EVALUATION
+   Comprehensive psychological evaluation completed within 12 months of the SCS
+   request by a licensed psychologist or psychiatrist. Evaluation must confirm:
+   - No untreated psychiatric contraindication to implantation
+   - Appropriate coping skills and realistic expectations
+   - Absence of secondary gain issues
+
+4. SUCCESSFUL SCS TRIAL
+   Successful SCS trial period meeting ALL of the following:
+   - Trial duration of 5-7 days minimum
+   - >= 50% pain relief during the trial period
+   - Documented functional improvement (activities, mobility, sleep)
+   - Patient satisfaction with trial results
+
+5. SUBSTANCE ABUSE SCREENING
+   No active substance abuse disorder, or documented completion of a substance
+   abuse treatment program with ongoing monitoring.
+
+6. SURGICAL CANDIDACY
+   Patient is not a candidate for further corrective surgery that would address
+   the underlying pain generator.
+
+7. FOLLOW-UP PLAN
+   Documented follow-up plan including:
+   - Device programming and management schedule
+   - Physical therapy post-implantation
+   - Medication tapering plan (if applicable)
+   - Regular follow-up visits
+
+REQUIRED DOCUMENTATION:
+- Psychological evaluation report
+- SCS trial procedure notes and daily pain logs
+- Physical therapy records
+- Comprehensive medication history
+- Imaging studies
+- Prior surgical records (if applicable)
+
+APPLICABLE CPT CODES:
+63650, 63655, 63661, 63662, 63663, 63664, 63685, 63688
+
+APPEAL DEADLINE: 60 calendar days from denial notification
+
+GUIDELINE SOURCE: Cigna Medical Coverage Policy 0112

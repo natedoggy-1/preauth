@@ -1,0 +1,66 @@
+LETTER TEMPLATE: Initial Prior Authorization — Interventional Pain Management
+Template ID: TMPL-IA-PAIN-001
+Service Category: pain_management
+Letter Type: initial_auth
+
+INSTRUCTIONS:
+Generate a prior authorization letter for an interventional pain procedure (ESI,
+nerve block, facet injection, etc.). Include specific imaging findings, prior
+injection response data, and medication trial outcomes. Address each payer criterion
+individually.
+
+TEMPLATE STRUCTURE:
+
+[Today's Date]
+
+[Payer Name]
+Attn: Utilization Review Department
+[Payer Address]
+
+RE: Prior Authorization Request — Interventional Pain Procedure
+Patient: [Patient Full Name]
+Date of Birth: [DOB]
+Member ID: [Member ID]
+
+Dear Utilization Review Department,
+
+I am requesting prior authorization for [Procedure Name] (CPT [CPT Codes]) for the
+above-referenced patient who has been under my care for management of [Primary Diagnosis].
+
+DIAGNOSIS AND CLINICAL PRESENTATION
+[Primary and secondary diagnoses with ICD-10 codes. Detailed symptom description
+including pain location, radiation pattern, intensity (VAS/NRS), duration, and
+aggravating/alleviating factors. Neurological examination findings: motor strength,
+sensory testing, reflex changes, provocative tests (SLR, Spurling).]
+
+DIAGNOSTIC IMAGING
+[MRI or CT findings with specific structural pathology identified. Correlation
+between imaging findings and clinical presentation. Include imaging date, modality,
+and key measurements.]
+
+PRIOR CONSERVATIVE TREATMENT
+[Medication trials: each medication with dose, duration, and outcome
+Physical therapy: program details, number of visits, functional outcomes
+Prior injection procedures (if any): type, date, approach, guidance method,
+percent pain relief, duration of relief, functional improvement]
+
+MEDICAL NECESSITY JUSTIFICATION
+[Clinical rationale for the requested procedure. Alignment with evidence-based
+guidelines. Expected therapeutic benefit. Why conservative measures have been
+insufficient. Reference to payer-specific policy criteria.]
+
+PROCEDURE PLAN
+[Specific procedure requested, anatomic target (spinal level, laterality),
+approach (transforaminal, interlaminar, caudal), image guidance method
+(fluoroscopy, CT), medications to be injected (steroid type and dose,
+local anesthetic).]
+
+Thank you for your prompt review of this request. Please contact our office at
+[Phone] or fax [Fax] with any questions or to arrange a peer-to-peer review.
+
+Sincerely,
+
+[Provider Signature]
+[Provider Name], [Credentials]
+[Facility Name]
+NPI: [Provider NPI]

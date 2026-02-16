@@ -1,0 +1,56 @@
+Aetna Clinical Policy Bulletin: Lumbar Spinal Fusion Surgery
+Policy Number: CPB 0743 | Effective Date: January 1, 2024
+
+POLICY SUMMARY
+Aetna considers lumbar spinal fusion surgery medically necessary for the treatment of
+degenerative disc disease, spondylolisthesis, spinal stenosis, or disc herniation when
+specific clinical criteria are met.
+
+CLINICAL CRITERIA — ALL of the following must be documented:
+
+1. IMAGING CONFIRMATION
+   MRI or CT confirms disc herniation, spinal stenosis, or spondylolisthesis with
+   clinical symptoms that correlate with the structural findings. Dynamic instability
+   may require flexion/extension radiographs.
+
+2. PHYSICAL THERAPY REQUIREMENT
+   Patient has completed >= 12 weeks of structured physical therapy with documented
+   functional outcome scores (ODI, VAS, or equivalent). Therapy must include core
+   stabilization, flexibility training, and progressive strengthening.
+
+3. FAILED INTERVENTIONAL PROCEDURES
+   At least 2 failed epidural steroid injections (ESI) or selective nerve root blocks
+   performed under fluoroscopic guidance, with documented response to each injection.
+
+4. PHARMACOTHERAPY FAILURE
+   Documented failure of multimodal pharmacotherapy including:
+   - NSAIDs (minimum 4-week trial)
+   - Muscle relaxants
+   - Neuropathic agents (gabapentin, pregabalin, or duloxetine)
+
+5. FUNCTIONAL DISABILITY
+   Oswestry Disability Index (ODI) >= 40% or Visual Analog Scale (VAS) pain score
+   >= 7/10, measured within 30 days of the authorization request.
+
+6. BMI REQUIREMENT
+   BMI < 35, or documented enrollment in a medically-supervised weight management
+   program if BMI >= 35.
+
+7. TOBACCO CESSATION
+   No active tobacco use, or documented completion of a tobacco cessation program.
+
+REQUIRED DOCUMENTATION FOR SUBMISSION:
+- MRI or CT report (within 12 months)
+- Physical therapy records with functional outcome scores
+- ESI/nerve block procedure notes with response documentation
+- Current medication list with trial durations and outcomes
+- ODI/VAS scores (within 30 days)
+- BMI documentation
+- Tobacco use screening
+
+APPLICABLE CPT CODES:
+22612, 22630, 22633, 63047, 63048
+
+APPEAL DEADLINE: 45 calendar days from denial notification
+
+GUIDELINE SOURCES: InterQual, Aetna Clinical Policy Bulletin 0743

@@ -1,0 +1,51 @@
+Aetna Clinical Policy Bulletin: Total Knee Arthroplasty (TKA)
+Policy Number: CPB 0650 | Effective Date: January 1, 2024
+
+POLICY SUMMARY
+Aetna considers total knee arthroplasty medically necessary for patients with
+end-stage knee osteoarthritis or rheumatoid arthritis who have failed conservative
+management and demonstrate significant functional impairment.
+
+CLINICAL CRITERIA — ALL of the following must be met:
+
+1. DIAGNOSIS CONFIRMATION
+   Primary osteoarthritis (ICD-10: M17.x) or rheumatoid arthritis (M06.x)
+   confirmed by weight-bearing radiographs of the affected knee.
+
+2. RADIOGRAPHIC SEVERITY
+   Kellgren-Lawrence grade 3 or 4 joint space narrowing on standing AP views.
+   Grade 3: definite osteophytes, moderate joint space narrowing.
+   Grade 4: large osteophytes, severe narrowing, subchondral sclerosis.
+
+3. CONSERVATIVE TREATMENT FAILURE (>= 6 months total)
+   a. Physical therapy: minimum 12 visits with documented functional outcomes
+   b. NSAIDs or analgesics: adequate trial duration
+   c. At least 1 intra-articular corticosteroid or hyaluronic acid injection
+
+4. FUNCTIONAL IMPAIRMENT
+   Significant functional impairment documented by validated instrument:
+   - WOMAC total score indicating moderate-to-severe disability, OR
+   - KOOS (Knee Injury and Osteoarthritis Outcome Score) demonstrating
+     significant impact on daily activities, sport, and quality of life
+
+5. AGE CONSIDERATION
+   Age >= 50 years. Patients < 50 may be considered with documented severe
+   joint destruction and exhaustion of all joint-preserving alternatives.
+
+6. BMI REQUIREMENT
+   BMI < 40. If BMI >= 40, documented participation in weight optimization
+   program required.
+
+REQUIRED DOCUMENTATION:
+- Weight-bearing knee radiographs (AP, lateral, sunrise views)
+- Physical therapy records with functional scores
+- Injection procedure notes
+- WOMAC or KOOS assessment scores
+- Pre-operative medical clearance
+
+APPLICABLE CPT CODES:
+27447, 27446, 27486, 27487
+
+APPEAL DEADLINE: 45 calendar days from denial notification
+
+GUIDELINE SOURCE: Aetna Clinical Policy Bulletin 0650

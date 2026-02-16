@@ -1,0 +1,77 @@
+LETTER TEMPLATE: Initial Prior Authorization — Spine Surgery
+Template ID: TMPL-IA-SPINE-001
+Service Category: spine_surgery
+Letter Type: initial_auth
+
+INSTRUCTIONS:
+Generate a comprehensive prior authorization letter for spine surgery. Address each
+payer policy criterion with specific patient evidence. Use formal medical tone.
+Include ICD-10 and CPT codes throughout.
+
+TEMPLATE STRUCTURE:
+
+[Today's Date]
+
+[Payer Name]
+Attn: Prior Authorization Department
+[Payer Address]
+
+RE: Prior Authorization Request — Spine Surgery
+Patient: [Patient Full Name]
+Date of Birth: [DOB]
+Member ID: [Member ID]
+Group Number: [Group ID]
+Plan: [Plan Name]
+Proposed Date of Service: [Requested DOS]
+
+Dear Medical Director,
+
+I am writing on behalf of my patient, [Patient Name], a [Age]-year-old [Sex] to request
+prior authorization for [Service Name] (CPT [CPT Codes]). As [his/her] treating
+[Provider Specialty], I have determined this procedure to be medically necessary based
+on the clinical evidence detailed below.
+
+CLINICAL HISTORY AND DIAGNOSIS
+[Present the patient's relevant medical history, primary and secondary diagnoses with
+ICD-10 codes, duration of symptoms, and progression of condition. Include relevant
+comorbidities that impact treatment decisions.]
+
+DIAGNOSTIC IMAGING
+[Detail all relevant imaging findings: MRI, CT, X-ray results. Include specific
+measurements, grading systems used, and correlation between imaging findings and
+clinical symptoms. Reference the most recent imaging date.]
+
+CONSERVATIVE TREATMENT HISTORY
+[Document ALL conservative treatments attempted, organized chronologically:
+- Physical therapy: dates, number of visits, specific protocol, outcomes
+- Medication trials: drug name, dose, duration, response, reason for discontinuation
+- Injection procedures: type, date, approach, guidance method, response (% relief, duration)
+Include the failure or inadequacy of each treatment modality.]
+
+MEDICAL NECESSITY JUSTIFICATION
+[Address each payer policy criterion individually. For each criterion, cite the specific
+patient evidence that satisfies it. Use a numbered list matching the policy criteria.
+Example: "Criterion 1 (Imaging confirmation): MRI dated [date] demonstrates..."]
+
+SUPPORTING CLINICAL EVIDENCE
+[Reference any additional supporting evidence: clinical guidelines (ACR, AANS, NASS),
+peer-reviewed literature, validated outcome scores (ODI, VAS, NDI), functional
+assessments, specialist consultations.]
+
+CONCLUSION
+In summary, [Patient Name] has [diagnosis] confirmed by [imaging], has exhausted
+conservative treatment options including [list key failures], and meets all clinical
+criteria for [procedure]. I respectfully request prompt authorization for this
+medically necessary procedure.
+
+Please do not hesitate to contact our office with any questions or to schedule a
+peer-to-peer review.
+
+Sincerely,
+
+[Provider Signature]
+[Provider Name], [Credentials]
+[Specialty]
+NPI: [Provider NPI]
+[Facility Name]
+[Facility Phone] | Fax: [Facility Fax]
